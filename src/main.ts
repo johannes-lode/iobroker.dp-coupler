@@ -27,7 +27,7 @@ import * as path from "path";
 declare global {
     namespace ioBroker {
         interface AdapterConfig {
-            mappingsRaw: string;
+            mappingsRaw: string | unknown[]; // canonical: JSON string; tolerated: native array
             forwardOnAckDefault: boolean;
             forwardChangesOnlyDefault: boolean;
             propagateAckDefault: boolean;
@@ -35,6 +35,7 @@ declare global {
             syncUnit: string;          // unit: "ms" | "s" | "min" | "h"
             relayOnChange: boolean;    // when sync active: also relay on event; irrelevant when sync disabled
             enabledDefault: boolean;   // initial enabled state for per-channel datapoints
+            configVersion?: number;    // self-heal/migration marker; missing/<1 triggers default normalization
         }
     }
 }
@@ -52,6 +53,25 @@ interface MappingEntry {
     propagateAck?: boolean;
     enabled?: boolean;               // seed value for the channels.<id>.enabled datapoint
 }
+
+// ---------------------------------------------------------------------------
+// Native config defaults
+// ---------------------------------------------------------------------------
+//
+// Mirror of the io-package.json "native" defaults (minus mappingsRaw, which is
+// handled separately). Used by the configVersion self-heal in onReady() to fill
+// fields that are missing on a fresh or migrated instance, so the admin UI shows
+// real values instead of blanks. mappingsRaw is intentionally excluded.
+
+const NATIVE_DEFAULTS: Record<string, unknown> = {
+    forwardOnAckDefault:       false,
+    forwardChangesOnlyDefault: true,
+    propagateAckDefault:       false,
+    syncIntervalValue:         0,
+    syncUnit:                  "ms",
+    relayOnChange:             false,
+    enabledDefault:            true,
+};
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -126,13 +146,65 @@ class DpCoupler extends utils.Adapter {
             native: {},
         });
 
-        const mappings = this.loadMappings();
+        // Load mappings from config (tolerant: accepts a JSON string or a native array).
+        let mappings = this.loadMappings();
         if (mappings === null) {
             // Error already logged inside loadMappings().
             return;
         }
 
-        this.persistMappingsFile();
+        // Seeding: an empty config plus a present, valid seed file means initial
+        // deployment without UI access. Adopt the seed entries; the file is consumed
+        // (deleted) after a successful DB write so emptying the config later cannot
+        // resurrect them. The "config empty" condition is the primary re-seed guard.
+        let seeded = false;
+        if (mappings.length === 0) {
+            const seedEntries = this.readSeedMappings();
+            if (seedEntries !== null) {
+                mappings = seedEntries;
+                seeded = true;
+            }
+        }
+
+        // Single normalization write (self-heal). Combines three concerns into one
+        // extendForeignObjectAsync call → at most one config restart:
+        //   (a) configVersion < 1: fill missing native defaults so the admin UI shows
+        //       real values instead of blanks (also a forward-compatible migration hook);
+        //   (b) a native array in mappingsRaw → canonical pretty-printed string;
+        //   (c) seeded mappings → persisted into mappingsRaw.
+        // We do NOT return afterwards — the loader is tolerant and relays immediately
+        // from the in-memory mappings even if the restart does not occur.
+        const isFirstStart = (this.config.configVersion ?? 0) < 1;
+        const canonicalRaw = (typeof this.config.mappingsRaw === "string" && !seeded)
+            ? this.config.mappingsRaw
+            : JSON.stringify(mappings, null, 2);
+
+        const patch: Record<string, unknown> = {};
+        if (isFirstStart) {
+            const cfg = this.config as unknown as Record<string, unknown>;
+            for (const [key, def] of Object.entries(NATIVE_DEFAULTS)) {
+                if (cfg[key] === undefined || cfg[key] === null) patch[key] = def;
+            }
+            patch.configVersion = 1;
+        }
+        if (seeded || Array.isArray(this.config.mappingsRaw)) {
+            patch.mappingsRaw = canonicalRaw;
+        }
+        if (Object.keys(patch).length > 0) {
+            this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, { native: patch })
+                .then(() => {
+                    this.log.info("dp-coupler: configuration normalized (self-heal).");
+                    // Consume the seed file only after the config was persisted, so a
+                    // failed write leaves the seed in place for the next start.
+                    if (seeded) this.consumeSeedFile();
+                })
+                .catch((err: unknown) => {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.log.warn(`dp-coupler: config normalization failed: ${message}`);
+                });
+        }
+
+        this.persistMappingsFile(canonicalRaw);
 
         if (mappings.length === 0) {
             this.log.info("dp-coupler: mapping configuration is empty – nothing to relay.");
@@ -418,24 +490,27 @@ class DpCoupler extends utils.Adapter {
     // -----------------------------------------------------------------------
 
     /**
-     * Loads and validates the mapping configuration from this.config.mappingsRaw
-     * (ioBroker DB, edited via admin UI).
+     * Parses and validates a raw mapping value. Tolerant: a string is JSON-parsed,
+     * an array/object is taken as-is (supports a natively set mappingsRaw array).
+     * `label` names the source for log messages (e.g. "mappingsRaw", seed file path).
      * Returns the validated array on success, or null on any unrecoverable error.
      */
-    private loadMappings(): MappingEntry[] | null {
-        const raw = this.config.mappingsRaw ?? "[]";
-
+    private parseMappings(raw: unknown, label: string): MappingEntry[] | null {
         let parsed: unknown;
-        try {
-            parsed = JSON.parse(raw);
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this.log.error(`dp-coupler: mappingsRaw is not valid JSON: ${message}`);
-            return null;
+        if (typeof raw === "string") {
+            try {
+                parsed = JSON.parse(raw);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.log.error(`dp-coupler: ${label} is not valid JSON: ${message}`);
+                return null;
+            }
+        } else {
+            parsed = raw;
         }
 
         if (!Array.isArray(parsed)) {
-            this.log.error(`dp-coupler: mappingsRaw must be a JSON array.`);
+            this.log.error(`dp-coupler: ${label} must be a JSON array.`);
             return null;
         }
 
@@ -445,24 +520,80 @@ class DpCoupler extends utils.Adapter {
                 valid.push(parsed[i] as MappingEntry);
             } else {
                 this.log.warn(
-                    `dp-coupler: mapping entry [${i}] is missing "source" or "target" – skipped.`
+                    `dp-coupler: ${label} entry [${i}] is missing "source" or "target" – skipped.`
                 );
             }
         }
-
-        this.log.info(`dp-coupler: loaded ${valid.length} valid mapping(s).`);
         return valid;
     }
 
     /**
-     * Writes the current mappingsRaw config to mappings.json as a convenience
-     * export (seeding, backup, deployment template). Non-fatal on failure.
+     * Loads and validates the mapping configuration from this.config.mappingsRaw
+     * (ioBroker DB, edited via admin UI). Accepts both a JSON string and a native array.
+     * Returns the validated array on success, or null on any unrecoverable error.
+     */
+    private loadMappings(): MappingEntry[] | null {
+        const valid = this.parseMappings(this.config.mappingsRaw ?? "[]", "mappingsRaw");
+        if (valid !== null) {
+            this.log.info(`dp-coupler: loaded ${valid.length} valid mapping(s).`);
+        }
+        return valid;
+    }
+
+    /**
+     * Absolute path of the one-shot seed file used for initial deployment.
+     * Kept separate from the export file (mappings.json) to avoid a seed feedback loop.
+     */
+    private seedFilePath(): string {
+        return path.resolve(this.adapterDir, "mappings.seed.json");
+    }
+
+    /**
+     * Reads and validates the optional one-shot seed file (mappings.seed.json).
+     * Returns the validated entries, or null if the file is absent, empty, or invalid.
+     * Does NOT delete the file — that is done by consumeSeedFile() after a successful
+     * config write, so a failed write leaves the seed in place for the next start.
+     */
+    private readSeedMappings(): MappingEntry[] | null {
+        const seedPath = this.seedFilePath();
+        let content: string;
+        try {
+            content = fs.readFileSync(seedPath, "utf-8");
+        } catch {
+            return null; // No seed file present – nothing to do.
+        }
+
+        const entries = this.parseMappings(content, `seed file "${seedPath}"`);
+        if (entries === null || entries.length === 0) return null;
+
+        this.log.info(`dp-coupler: seeding ${entries.length} mapping(s) from "${seedPath}".`);
+        return entries;
+    }
+
+    /**
+     * Deletes the consumed seed file (one-shot semantics). Non-fatal on failure:
+     * a read-only file/directory is a legitimate way for the operator to keep the
+     * seed; re-seeding is still prevented by the "config not empty" condition.
+     */
+    private consumeSeedFile(): void {
+        const seedPath = this.seedFilePath();
+        try {
+            fs.unlinkSync(seedPath);
+            this.log.info(`dp-coupler: consumed (deleted) seed file "${seedPath}".`);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.log.warn(`dp-coupler: could not delete seed file "${seedPath}": ${message}`);
+        }
+    }
+
+    /**
+     * Writes the canonical mappingsRaw content to mappings.json as a convenience
+     * export (backup, deployment template). Non-fatal on failure.
      * Skips the write when the file already contains the same content to avoid
      * triggering file-watcher restarts in dev environments.
      */
-    private persistMappingsFile(): void {
+    private persistMappingsFile(content: string): void {
         const filePath = path.resolve(this.adapterDir, "mappings.json");
-        const content = this.config.mappingsRaw ?? "[]";
 
         try {
             const existing = fs.readFileSync(filePath, "utf-8");

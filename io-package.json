@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "news": {
+      "0.2.0": {
+        "en": "Tolerant mappingsRaw (JSON string or native array) with self-heal; config default normalization via configVersion; one-shot seeding from mappings.seed.json",
+        "de": "Toleranter mappingsRaw (JSON-String oder natives Array) mit Self-Heal; Konfig-Default-Normalisierung über configVersion; einmaliges Seeding aus mappings.seed.json"
+      },
       "0.1.0": {
         "en": "Initial proof-of-concept release"
       }
@@ -43,7 +47,8 @@
     "syncIntervalValue": 0,
     "syncUnit": "ms",
     "relayOnChange": false,
-    "enabledDefault": true
+    "enabledDefault": true,
+    "configVersion": 0
   },
   "objects": [],
   "instanceObjects": [

@@ -1,6 +1,6 @@
 {
   "name": "iobroker.dp-coupler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ioBroker adapter: relay state changes between datapoints via JSON mapping",
   "author": "Johannes Lode, NAEXT GmbH",
   "license": "AGPL-3.0-only",

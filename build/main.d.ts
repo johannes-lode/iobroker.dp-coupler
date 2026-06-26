@@ -1,7 +1,7 @@
 declare global {
     namespace ioBroker {
         interface AdapterConfig {
-            mappingsRaw: string;
+            mappingsRaw: string | unknown[];
             forwardOnAckDefault: boolean;
             forwardChangesOnlyDefault: boolean;
             propagateAckDefault: boolean;
@@ -9,6 +9,7 @@ declare global {
             syncUnit: string;
             relayOnChange: boolean;
             enabledDefault: boolean;
+            configVersion?: number;
         }
     }
 }

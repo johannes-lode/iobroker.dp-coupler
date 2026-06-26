@@ -80,23 +80,42 @@ iob object get system.adapter.dp-coupler.0 | jq -r '.native.mappingsRaw' > mappi
 - [ ] README-Abschnitt „Deployment / Import & Export" mit obigen Befehlen + Begründung
   (Stringfeld vs. natives Array; Self-Heal) ergänzen.
 
+## Erweiterter Scope dieser Sitzung (Entscheidung 2026-06-26)
+
+Beschluss: Härtung 1–6 **plus** configVersion-Normalisierung **plus** Seeding werden
+gemeinsam umgesetzt. Begründung: alle drei teilen denselben
+`extendForeignObjectAsync`-Schreibpfad; ein kombinierter Normalisierungs-Write löst
+höchstens einen Config-Restart aus.
+
+### 7. configVersion + onReady-Normalisierung
+- [ ] `configVersion: 0` in `io-package.json` `native` (nur io-package, **nicht** jsonConfig).
+- [ ] `AdapterConfig.configVersion?: number`.
+- [ ] In `onReady()` früh: bei `configVersion < 1` alle fehlenden `native`-Defaults
+  explizit auffüllen (modulweite `NATIVE_DEFAULTS`-Tabelle) und `configVersion: 1` setzen
+  — **im selben** `extendForeignObjectAsync`-Patch wie der mappingsRaw-Self-Heal.
+- [ ] Ab `configVersion >= 1` überspringen. Primärnutzen: UI-Korrektheit + Migrationspfad.
+
+### 8. Seeding (One-Shot-Datei, konsumierend)
+- [ ] Trigger: Config-Mapping leer **und** `mappings.seed.json` vorhanden & valide
+  → Einträge übernehmen (in denselben Patch schreiben).
+- [ ] **Konsum:** Datei nach **erfolgreichem** DB-Write (`.then()`) löschen — One-Shot,
+  verhindert „Wiederauferstehung". Löschfehler (z. B. schreibgeschützt) ist nicht fatal:
+  warnen und weiter. Schutz gegen Re-Seed ist primär die „Config leer"-Bedingung.
+- [ ] Bewusst **getrennte** Datei (`mappings.seed.json`) vom Export (`mappings.json`),
+  damit der Export-Schreibpfad keinen Seed-Feedback-Loop erzeugt.
+- [ ] `parseMappings()`-Helper aus `loadMappings()` extrahieren (von Config- und Seed-Pfad
+  geteilt).
+
 ## Übernommene offene Punkte (aus vorherigem WORKPLAN)
 
 ### Kurzfristig
 - **`forwardChangesOnlyDefault` nicht zuverlässig default-on** bei Neu-Instanz.
-  Lösungsvorschlag: invertieren/umbenennen (`forwardChangesOnly` → `forwardRepeated`,
+  Lösungsvorschlag: invertieren/umbenennen (`forwardChangesOnly` → `forwardAll`,
   default `false`), damit default-off das gewünschte Verhalten ist und das
   ioBroker-Checkbox-Problem entfällt.
-- **Konfig-Initialisierung bei Neu-Instanz** — Felder erscheinen undefiniert/leer trotz
-  `native`-Defaults und `def`-Werten (`syncUnit` zeigt „-", `forwardChangesOnlyDefault`
-  erscheint deaktiviert). Fix-Ansatz: verstecktes `configVersion`-Feld (nur io-package,
-  **nicht** jsonConfig) + `onReady()`-Normalisierung via `extendForeignObjectAsync`
-  (teilt den Self-Heal-Pfad, s. o.), danach Restart; ab `configVersion >= 1` überspringen.
-  Später auch für Schema-Migrationen nutzbar.
+- **Konfig-Initialisierung bei Neu-Instanz** → in dieser Sitzung umgesetzt, s. Abschnitt 7.
 - **`info.connection`-Granularität** — Fail-Counter pro Eintrag; `info.connection=false`
   oberhalb einer Schwelle.
-- **Seeding-Weg** — leeres Mapping beim Start → `mappings.json` einlesen und als Config
-  übernehmen (initiales Deployment ohne UI-Zugang).
 
 ### Mittelfristig / Backlog
 - **Wert-Konvertierung (`transform` via JSON/JSONata)** pro MappingEntry. Vorerst werden

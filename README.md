@@ -155,14 +155,45 @@ without waiting for the next source change.
 ## Mass deployment
 
 To deploy the same configuration across multiple ioBroker instances without
-using the admin UI:
+using the admin UI. Replace `dp-coupler.0` with the target instance identifier.
+
+`mappingsRaw` is canonically a JSON **string** (that is what the admin jsonEditor
+saves). The adapter additionally tolerates a natively set JSON **array** and
+self-heals it back into the canonical pretty-printed string on the next start
+(one config restart), so the jsonEditor never shows a red "invalid JSON".
 
 ```bash
-iobroker set dp-coupler.0 native.mappingsRaw "$(cat mappings.json)"
+# Import (canonical string – always works):
+iobroker object set system.adapter.dp-coupler.0 \
+    native.mappingsRaw="$(jq -Rs . mappings.json)"
+iobroker restart dp-coupler.0
+
+# Import (native array – also accepted; self-healed to a string on next start):
+iobroker object set system.adapter.dp-coupler.0 \
+    native.mappingsRaw="$(cat mappings.json)"
+
+# Export (directly re-importable):
+iobroker object get system.adapter.dp-coupler.0 | jq -r '.native.mappingsRaw' > mappings.json
+```
+
+### Seeding (initial deployment without UI access)
+
+For a fresh instance with no mapping yet, place a `mappings.seed.json` file in the
+adapter's install directory. On the next start, **if the configured mapping is empty**,
+the adapter adopts the seed entries into `mappingsRaw` and then **consumes (deletes)
+the seed file** — a one-shot, so emptying the config later cannot resurrect it.
+
+```bash
+cp mappings.json <adapter-dir>/mappings.seed.json
 iobroker restart dp-coupler.0
 ```
 
-Replace `dp-coupler.0` with the target instance identifier.
+To keep the seed file around (e.g. a read-only template), make the file or its
+directory read-only; the deletion then fails non-fatally (a warning is logged) and
+re-seeding is still prevented because the config is no longer empty.
+
+Note: `mappings.seed.json` (seed input, consumed) is deliberately separate from
+`mappings.json` (export, rewritten on every start) to avoid a feedback loop.
 
 ## Development
 
@@ -185,8 +216,6 @@ Node.js ≥ 20 required.
 
 - **Fail counter** — set `info.connection` to `false` after a configurable
   number of consecutive write failures per mapping
-- **Seed from empty mapping** — when `mappingsRaw` is `[]` on startup and
-  `mappings.json` exists, read the file and adopt it as the active config
 - **Value conversion** — optional `transform` expression per mapping entry
   (JSON/JSONata), similar to ioBroker aliases
 

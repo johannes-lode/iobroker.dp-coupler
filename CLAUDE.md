@@ -70,13 +70,19 @@ Single TypeScript source file: `src/main.ts` → compiled to `build/main.js`.
 
 ### Configuration
 
-`this.config.mappingsRaw` (ioBroker DB) is the single source of truth — persisted automatically by ioBroker, edited via admin UI jsonEditor.
+`this.config.mappingsRaw` (ioBroker DB) is the single source of truth — persisted automatically by ioBroker, edited via admin UI jsonEditor. Canonical form is a JSON **string**; a natively set JSON **array** is tolerated and self-healed (see below).
 
-`loadMappings()`: reads `mappingsRaw`, parses JSON, validates array, filters entries via `isMappingEntry`. Returns validated array or `null` on unrecoverable error.
+`parseMappings(raw, label)`: tolerant parse+validate helper. A string is `JSON.parse`d; an array/object is taken as-is. Validates `Array.isArray` + filters entries via `isMappingEntry`. Shared by `loadMappings()` and `readSeedMappings()`. Returns validated array or `null` on unrecoverable error.
 
-`persistMappingsFile()`: called after every successful `loadMappings()`. Writes `mappingsRaw` to `mappings.json` in `this.adapterDir` as a convenience export (seeding, backup). Non-fatal on failure.
+`loadMappings()`: thin wrapper — `parseMappings(this.config.mappingsRaw, "mappingsRaw")` + logs the loaded count.
 
-Mass deployment: use `iobroker set dp-coupler.0 --native.mappingsRaw "$(cat mappings.json)"` or paste JSON directly into the admin UI.
+`readSeedMappings()` / `consumeSeedFile()`: one-shot seeding for initial deployment without UI access. `readSeedMappings()` reads+validates `mappings.seed.json` (separate from the export file). `consumeSeedFile()` deletes it — called only in the `extendForeignObjectAsync().then()` after a successful config write, so a failed write leaves the seed in place. Non-fatal on delete failure (read-only file = legitimate opt-out; re-seed still blocked by the "config not empty" condition).
+
+`persistMappingsFile(content)`: called after every successful `loadMappings()` with the canonical string. Writes to `mappings.json` in `this.adapterDir` as a convenience export (backup, deployment template). Non-fatal on failure. Content-equality check prevents nodemon restart loops.
+
+**Self-heal / normalization (one write in `onReady()`):** a single `extendForeignObjectAsync("system.adapter.${namespace}", { native: patch })` call combines three concerns (≤ one config restart): (a) `configVersion < 1` → fill missing `NATIVE_DEFAULTS` so the admin UI shows real values, set `configVersion: 1`; (b) native-array `mappingsRaw` → canonical pretty-printed string; (c) seeded mappings → persisted. No early `return` — the tolerant loader relays from the in-memory array even if no restart occurs.
+
+Mass deployment: `iobroker object set system.adapter.dp-coupler.0 native.mappingsRaw="$(jq -Rs . mappings.json)"` (canonical) or `"$(cat mappings.json)"` (native array, self-healed), or paste JSON into the admin UI. See README "Mass deployment" for import/export/seeding.
 
 ### `DpCoupler extends utils.Adapter`
 
@@ -87,7 +93,7 @@ Mass deployment: use `iobroker set dp-coupler.0 --native.mappingsRaw "$(cat mapp
 - `syncIntervalMs` — effective sync interval in ms, computed once in `onReady()` from `syncIntervalValue × unitMultiplier`; `0` when sync is disabled.
 - `syncTimer` — `setInterval` handle; `null` when periodic sync is disabled.
 - `unloading: boolean` — set to `true` in `onUnload()`; checked at the top of each `onSyncTick()` iteration to abort the loop cleanly during shutdown.
-- `onReady()`: creates `info` channel and `info.connection` via `setObjectAsync` → calls `loadMappings()` → builds `sourceIndex` and `targetIndex` → `subscribeForeignStatesAsync(sources + bidir targets)` → pre-populates `lastState` via `getForeignStateAsync` for all sources → starts `syncTimer` if `syncInterval > 0` → sets `info.connection = true`.
+- `onReady()`: creates `info` channel and `info.connection` via `setObjectAsync` → calls `loadMappings()` → if the config mapping is empty, attempts `readSeedMappings()` → builds the combined normalization `patch` (configVersion defaults + array self-heal + seeded mappings) and fires the single `extendForeignObjectAsync` write (consumes the seed file on success) → `persistMappingsFile(canonicalRaw)` → builds `sourceIndex` and `targetIndex` → `subscribeForeignStatesAsync(sources + bidir targets)` → pre-populates `lastState` via `getForeignStateAsync` for all sources → starts `syncTimer` if `syncInterval > 0` → sets `info.connection = true`.
 - `onStateChange()`: cycle guard (`inFlight`) → direction detection (source or reverse target) → updates `lastState` for forward direction → periodic-only guard (`syncInterval > 0 && !relayOnChange` → return) → `forwardOnAck` filter → `forwardChangesOnly` filter → `inFlight.add(destination)` → resolve `propagateAck` → `setForeignStateAsync`.
 - `onSyncTick()`: iterates `sourceIndex`; for each entry with a cached `lastState`, writes target via `setForeignStateAsync` (same `inFlight` guard as normal relay, respects `propagateAck`, bypasses `forwardOnAck`/`forwardChangesOnly` filters by design — heartbeat must always write).
 - `onUnload()`: sets `unloading = true` → clears `syncTimer` → fire-and-forget `setStateAsync("info.connection", false)` → calls `callback()` synchronously. **No async operations are awaited** — Redis/IPC ops hang indefinitely when js-controller tears down the connection during adapter restart.
@@ -122,6 +128,8 @@ When dp-coupler writes state X, it adds X to `inFlight` before the write. When `
 `propagateAckDefault` (default `false`): whether the target write receives `ack: state.ack` from the source. False means the target always receives `ack: false` (command semantics).
 
 `syncIntervalValue` (default `0`) + `syncUnit` (default `"ms"`, options: `ms`/`s`/`min`/`h`): together define the periodic sync interval. `syncIntervalValue = 0` disables the feature. Effective interval in ms is computed once at startup as `syncIntervalValue × unitMultiplier` and stored in `syncIntervalMs`. When active, all target datapoints are re-written at this interval with the last known source value (heartbeat/refresh). Only the forward direction (source → target) is synced — the reverse direction of bidirectional entries is not included in periodic updates.
+
+`configVersion` (default `0`, **io-package native only — not in jsonConfig**): self-heal/migration marker. When `< 1` at startup, `onReady()` fills any missing `NATIVE_DEFAULTS` and bumps it to `1` (via the shared normalization write), so the admin UI shows real values on fresh/migrated instances instead of blanks. Forward-compatible hook for future schema migrations. `NATIVE_DEFAULTS` (module-level const) mirrors the io-package `native` defaults minus `mappingsRaw`.
 
 `relayOnChange` (default `false`): only evaluated when `syncIntervalMs > 0`. `false` = periodic-only mode (no event relay). `true` = both periodic sync and event-driven relay. When `syncInterval === 0`, this flag has no effect — event-driven relay is always active.
 
