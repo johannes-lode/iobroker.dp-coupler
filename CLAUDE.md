@@ -147,6 +147,8 @@ When dp-coupler writes state X, it adds X to `inFlight` before the write. When `
 
 **Critical:** the jsonConfig attribute for a field's default value is `"default"`, NOT `"def"` (`def` is the state-object `common` key, a different schema). Most field types silently ignore an unknown `def` (defaults then never apply from the UI — they come from `io-package.json` `native` + the configVersion self-heal instead), but `"slider"` enforces `additionalProperties: false` and hard-fails admin validation on `def`. Use `default` for every jsonConfig field.
 
+**Critical:** the newer admin jsonConfig schema **requires** a root-level `"i18n"` property to be explicitly present (`required` in an `if/then` branch — omitting it fails validation even though semantically `false` == omitted). This project uses literal (untranslated) labels and has no `admin/i18n/` folder, so the root declares `"i18n": false`. Set it to `true` only if translation files are added under `admin/i18n/<lang>/translations.json`. Note: the admin schema reports `if/then` errors one blocker at a time — after fixing one root/field violation, re-validate, as the next may surface (this is how the `def` fix revealed the missing `i18n`).
+
 ### Debug trace
 
 `DPC_DEBUG` (module-level `const`, default `false`) controls the `[dpc]` trace output in `onStateChange()`. Set to `true` and rebuild to enable. `dpcLog()` is a thin wrapper around `console.log` gated by this flag — all `[dpc]` lines go through it.
