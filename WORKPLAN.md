@@ -187,8 +187,18 @@ praktischen Wert; Override bleibt rein additiv nachrüstbar, falls je Bedarf).
 - [x] Randbedingungen umgesetzt: Zieltyp `"mixed"`/fehlend → Durchreichen; Wert-Typ==Zieltyp
   → No-op; `lastValue` bleibt Roh-Quellwert (nur Ziel-Write gecastet). Kein Skip/Fehlerpfad
   nötig — Coercion scheitert by design nie (verzichtet statt zu werfen).
-- [ ] **Verbleibt beim User:** `npm run build` (Verifikations-`tsc --noEmit` durch Claude grün),
-  Version/News-Bump, Deploy; danach Feldtest Bool↔Zahl (MODBUS↔OPC-UA).
+- [x] Build/Deploy durch User; **Feldtest auf Vollsystem: Bool↔Zahl-Cast funktioniert auf den
+  kritischen Datenpunkten wie gewollt** (2026-07-02). Weitere Tests laufen im Hintergrund.
+
+### Nachgelagert: jsonConfig-Admin-Validierung (2026-07-02)
+Beim Öffnen der Instanz-Config meldete der Admin-Adapter `invalid jsonConfig`. Ursache: das
+Admin-AJV-Schema meldet `if/then`-Blocker **einzeln**; zwei latente Fehler in der bestehenden
+`admin/jsonConfig.json` kamen nacheinander zum Vorschein. Beide behoben (s. CLAUDE.md „Admin UI"):
+- [x] `def` → `default` (jsonConfig-Feld-Default heißt `default`; `slider` erzwingt
+  `additionalProperties: false` und failte hart auf `def`). Nebeneffekt: UI-Defaults greifen jetzt.
+- [x] Wurzel-Property `"i18n": false` ergänzt (neueres Schema verlangt `i18n` explizit; kein
+  `admin/i18n/`-Ordner, Labels sind literal).
+- [x] **Verifiziert:** nach Öffnen der Config im Admin-UI **keine weitere Fehlermeldung** — vollständig.
 
 ### Feature B — JSONata-Transformation (später, optional)
 Erst umsetzen, wenn Cast im Feld läuft. Pipeline-Naht steht dann bereits.
@@ -209,6 +219,50 @@ Erst umsetzen, wenn Cast im Feld läuft. Pipeline-Naht steht dann bereits.
 - [ ] README/Doku: Beispiele (Enum-Mapping, Schwellwert Zahl→Bool, String-Parsing) +
   bidirektionale forward/reverse-Warnung.
 
+## Feature-Request: Admin-UI-Tabellen-Editor für Einträge (2026-07-02)
+
+### Ziel
+Ein komfortabler Admin-UI-Tab für die Mapping-Einträge im Stil des **Register-Editors des
+MODBUS-Adapters** (jsonConfig-`table`-Typ: editierbares Grid mit Spalten, Zeilen add/delete/
+sortieren) statt/neben dem heutigen Roh-`jsonEditor`.
+
+### Entscheidungen (2026-07-02)
+- **Tabelle primär, Roh-JSON-Tab bleibt.** Die Tabelle ist der komfortable Editor; der
+  `jsonEditor` (`mappingsRaw`) bleibt als zweiter Tab für Bulk-Edit, Import/Export, Power-User.
+- **Spalten: alle `MappingEntry`-Felder.** `source`/`target` (Text) + `bidirectional`,
+  `forwardOnAck`, `forwardChangesOnly`, `propagateAck`, `enabled` als Checkbox-Spalten.
+- **Datenformate außen: JSON bleibt kanonisch; TSV kommt dazu** — als alternatives
+  Import/Export-/Seed-Dateiformat **und** als **Paste-Feld im UI** (direktes Einfügen aus
+  Tabellenkalkulation).
+
+### Offene Design-Punkte (bei Umsetzung klären)
+- **Speicher-Spannung Tabelle ↔ kanonischer String (wichtigster Punkt):** jsonConfig-`table`
+  bindet an ein **Array**-Attribut; `mappingsRaw` ist aber kanonisch ein **String** und der
+  Self-Heal wandelt ein natives Array beim Start in einen String zurück (Abschnitt
+  „Configuration"/onReady). Eine direkt an `mappingsRaw` gebundene Tabelle würde durch den
+  Self-Heal re-stringifiziert und beim nächsten Öffnen nicht mehr befüllt. Optionen:
+  (a) Self-Heal anpassen: natives Array **belassen**, wenn die Tabelle der Editor ist
+  (kanonische Form ggf. auf Array umstellen); (b) Tabelle an ein **separates** Array-Native-Feld
+  binden und `mappingsRaw` als String-Spiegel führen → Reconciliation/zwei Quellen;
+  (c) Roh-JSON-Tab und Tabelle über einen Konvertierungs-Schritt koppeln. → Entscheidung bei
+  Umsetzung; Option (a) wirkt am kohärentesten (der tolerante Loader akzeptiert Arrays bereits).
+- **Datenpunkt-Auswahl:** `source`/`target` als Objekt-ID-Picker/Autocomplete statt Freitext
+  (bessere UX, MODBUS-nah) — als Ausbaustufe prüfen (jsonConfig-Fähigkeiten).
+- **Spalten für Feature B:** sobald JSONata (`transform`/`transformReverse`) kommt, Tabelle um
+  diese Spalten erweitern; Grid-Design von Anfang an erweiterbar halten.
+- **TSV-Definition:** Spaltenreihenfolge/Header 1:1 auf `MappingEntry`; Booleans-Kodierung
+  (`true`/`false` vs. `1`/`0`) und Escaping festlegen; verlustfreier JSON↔TSV-Round-Trip.
+- **Validierung:** Tabelle gibt Struktur vor, aber `loadMappings()`/`parseMappings()` bleibt die
+  maßgebliche Validierung beim Start (source/target Pflicht).
+
+### Aufgaben (später)
+- [ ] `admin/jsonConfig.json`: `table`-Feld mit allen Spalten; zweiter Tab „Raw JSON" mit dem
+  bestehenden `jsonEditor`.
+- [ ] Speicher-Spannung gemäß gewählter Option lösen (Self-Heal/Ablage anpassen).
+- [ ] TSV: Import/Export-/Seed-Unterstützung + UI-Paste-Feld inkl. JSON↔TSV-Konvertierung.
+- [ ] Optional: Objekt-ID-Picker für source/target.
+- [ ] README/CLAUDE.md aktualisieren (neuer Editor, TSV-Format, kanonische Form falls geändert).
+
 ## Status
 
 **Implementierung Aufgaben 1–8 abgeschlossen** (Härtung + configVersion + Seeding),
@@ -216,10 +270,14 @@ Verifikations-Build sauber, Version auf **0.2.0** gebumpt (io-package + package.
 News-Eintrag en/de). Code-seitig steht damit alles; im Deployment entfällt das
 `jq -Rs`-Escaping für `mappingsRaw` (natives Array wird direkt akzeptiert und self-gehealt).
 
+**Feature A (Typ-Coercion) abgeschlossen und im Feld bestätigt** (2026-07-02): Bool↔Zahl-Cast
+läuft auf dem Vollsystem wie gewollt; jsonConfig-Admin-Validierung vollständig sauber
+(`def`→`default`, `i18n` ergänzt). Weitere Hintergrund-Tests laufen beim User.
+
 **Offen / als Nächstes:**
-- **Manuelle Tests durch User laufen** (Aufgabe 5, Fälle a–f). Bei Auffälligkeiten zurück
-  an die Implementierung.
-- Danach Release-Commit (inkl. `build/`) + `iobroker url`-Deploy.
-- **Feldtest** weiterhin ausstehend.
+- Rückmeldung aus den laufenden Hintergrund-Tests abwarten.
+- **Feature B (JSONata-Transformation)** ist geplant und die Pipeline-Naht steht — Umsetzung
+  erst auf Zuruf.
+- (Früher, ggf. bereits erledigt:) Härtungs-Tests Aufgabe 5 Fälle a–f.
 
 Vorheriger Stand: PoC abgeschlossen, Adapter im dev-server verifiziert.
