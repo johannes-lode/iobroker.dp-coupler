@@ -26,7 +26,7 @@
                     "min": 0,
                     "max": 200,
                     "step": 1,
-                    "def": 0,
+                    "default": 0,
                     "sm": 9
                 },
                 "syncUnit": {
@@ -38,14 +38,14 @@
                         {"label": "min","value": "min"},
                         {"label": "h",  "value": "h"}
                     ],
-                    "def": "ms",
+                    "default": "ms",
                     "sm": 3
                 },
                 "relayOnChange": {
                     "type": "checkbox",
                     "label": "Also relay on change (in addition to periodic sync)",
                     "help": "When periodic sync is active (interval > 0), also relay immediately on source value change. Has no effect when interval is 0 — event-driven relay is always active then.",
-                    "def": false,
+                    "default": false,
                     "newLine": true,
                     "disabled": "(!data.syncIntervalValue)"
                 },
@@ -62,24 +62,24 @@
                 "forwardOnAckDefault": {
                     "type": "checkbox",
                     "label": "Forward on ACK (trigger on ack=true)",
-                    "def": false,
+                    "default": false,
                     "newLine": true
                 },
                 "forwardChangesOnlyDefault": {
                     "type": "checkbox",
                     "label": "Forward value changes only",
-                    "def": true
+                    "default": true
                 },
                 "propagateAckDefault": {
                     "type": "checkbox",
                     "label": "Propagate ACK flag to target",
-                    "def": false
+                    "default": false
                 },
                 "enabledDefault": {
                     "type": "checkbox",
                     "label": "Enable flag default",
                     "help": "Initial state of the per-channel enabled datapoint. Can be overridden per entry via the 'enabled' field of the mapping entry and toggled at runtime via the channels.<id>.enabled datapoints.",
-                    "def": true
+                    "default": true
                 },
                 "divider_2": {
                     "type": "staticText",
@@ -95,14 +95,14 @@
                     "type": "checkbox",
                     "label": "Coerce types (bool ↔ number, C convention)",
                     "help": "Cast between boolean and number following C conventions: number 0 → false / non-0 → true, false → 0 / true → 1. Applied on both event relay and periodic sync.",
-                    "def": true,
+                    "default": true,
                     "newLine": true
                 },
                 "coerceStringsDefault": {
                     "type": "checkbox",
                     "label": "Also interpret strings",
                     "help": "Additionally interpret strings when coercing: \"\"/\"0\"/\"false\" → false, else → true; numeric strings → number. Unrecognized strings are passed through unchanged. Off by default (extra effort, opt-in).",
-                    "def": false,
+                    "default": false,
                     "disabled": "(!data.coerceTypesDefault)"
                 }
             }

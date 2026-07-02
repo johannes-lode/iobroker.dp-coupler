@@ -145,6 +145,8 @@ When dp-coupler writes state X, it adds X to `inFlight` before the write. When `
 
 **Critical:** the valid ioBroker jsonConfig type for JSON editing is `"jsonEditor"`. The types `"textarea"` and `"json"` are NOT valid and cause an admin validation error ("dp-coupler has an invalid jsonConfig"). No UI-side validation — validation happens in `loadMappings()` at adapter start.
 
+**Critical:** the jsonConfig attribute for a field's default value is `"default"`, NOT `"def"` (`def` is the state-object `common` key, a different schema). Most field types silently ignore an unknown `def` (defaults then never apply from the UI — they come from `io-package.json` `native` + the configVersion self-heal instead), but `"slider"` enforces `additionalProperties: false` and hard-fails admin validation on `def`. Use `default` for every jsonConfig field.
+
 ### Debug trace
 
 `DPC_DEBUG` (module-level `const`, default `false`) controls the `[dpc]` trace output in `onStateChange()`. Set to `true` and rebuild to enable. `dpcLog()` is a thin wrapper around `console.log` gated by this flag — all `[dpc]` lines go through it.
