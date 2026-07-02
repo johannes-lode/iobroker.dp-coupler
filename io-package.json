@@ -48,6 +48,8 @@
     "syncUnit": "ms",
     "relayOnChange": false,
     "enabledDefault": true,
+    "coerceTypesDefault": true,
+    "coerceStringsDefault": false,
     "configVersion": 0
   },
   "objects": [],

@@ -9,6 +9,8 @@ declare global {
             syncUnit: string;
             relayOnChange: boolean;
             enabledDefault: boolean;
+            coerceTypesDefault: boolean;
+            coerceStringsDefault: boolean;
             configVersion?: number;
         }
     }

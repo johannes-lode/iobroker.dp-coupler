@@ -68,7 +68,13 @@ const NATIVE_DEFAULTS = {
     syncUnit: "ms",
     relayOnChange: false,
     enabledDefault: true,
+    coerceTypesDefault: true,
+    coerceStringsDefault: false,
 };
+// Current native config schema version. onReady() fills any missing NATIVE_DEFAULTS and
+// bumps configVersion to this value whenever the stored version is lower — the forward-
+// compatible migration hook (new native fields become visible in the admin UI on upgrade).
+const CONFIG_VERSION = 2;
 // ---------------------------------------------------------------------------
 // Type guard
 // ---------------------------------------------------------------------------
@@ -104,6 +110,7 @@ class DpCoupler extends utils.Adapter {
         this.lastState = new Map();
         this.enabledMap = new Map();
         this.enabledDpToSource = new Map();
+        this.destType = new Map();
         this.syncTimer = null;
         this.syncIntervalMs = 0;
         this.unloading = false;
@@ -158,18 +165,18 @@ class DpCoupler extends utils.Adapter {
         //   (c) seeded mappings → persisted into mappingsRaw.
         // We do NOT return afterwards — the loader is tolerant and relays immediately
         // from the in-memory mappings even if the restart does not occur.
-        const isFirstStart = (this.config.configVersion ?? 0) < 1;
+        const needsNativeMigration = (this.config.configVersion ?? 0) < CONFIG_VERSION;
         const canonicalRaw = (typeof this.config.mappingsRaw === "string" && !seeded)
             ? this.config.mappingsRaw
             : JSON.stringify(mappings, null, 2);
         const patch = {};
-        if (isFirstStart) {
+        if (needsNativeMigration) {
             const cfg = this.config;
             for (const [key, def] of Object.entries(NATIVE_DEFAULTS)) {
                 if (cfg[key] === undefined || cfg[key] === null)
                     patch[key] = def;
             }
-            patch.configVersion = 1;
+            patch.configVersion = CONFIG_VERSION;
         }
         if (seeded || Array.isArray(this.config.mappingsRaw)) {
             patch.mappingsRaw = canonicalRaw;
@@ -213,7 +220,8 @@ class DpCoupler extends utils.Adapter {
         // Build per-channel objects (channels.<id>.enabled + .lastValue) for all active entries.
         for (const [sourceId, entry] of this.sourceIndex) {
             const channelId = sourceToChannelId(sourceId);
-            // Determine source datapoint type for the lastValue object definition.
+            // Determine source datapoint type for the lastValue object definition and,
+            // together with the target type below, for the coercion cache (destType).
             let sourceType = "mixed";
             try {
                 const srcObj = await this.getForeignObjectAsync(sourceId);
@@ -222,6 +230,16 @@ class DpCoupler extends utils.Adapter {
                 }
             }
             catch { /* fallback to mixed */ }
+            // Cache declared target/source types for coercion. The reverse direction of a
+            // bidirectional entry writes back to the source, so its type is a destination too.
+            this.destType.set(sourceId, sourceType);
+            try {
+                const tgtObj = await this.getForeignObjectAsync(entry.target);
+                if (tgtObj && tgtObj.type === "state" && tgtObj.common.type) {
+                    this.destType.set(entry.target, tgtObj.common.type);
+                }
+            }
+            catch { /* leave unset → coercion passes through */ }
             await this.setObjectAsync(`channels.${channelId}`, {
                 type: "channel",
                 common: { name: sourceId },
@@ -399,12 +417,13 @@ class DpCoupler extends utils.Adapter {
         dpcLog(`[dpc]   RELAY  inFlight=${ifs()}`);
         try {
             const shouldPropagateAck = entry.propagateAck ?? this.config.propagateAckDefault ?? false;
+            const outVal = this.resolveValue(entry, forwardEntry ? "forward" : "reverse", state.val, destination);
             await this.setForeignStateAsync(destination, {
-                val: state.val,
+                val: outVal,
                 ack: shouldPropagateAck ? state.ack : false,
                 q: state.q,
             });
-            this.log.debug(`dp-coupler: ${id} → ${destination} = ${state.val}`);
+            this.log.debug(`dp-coupler: ${id} → ${destination} = ${outVal}`);
         }
         catch (err) {
             this.inFlight.delete(destination);
@@ -430,7 +449,7 @@ class DpCoupler extends utils.Adapter {
             try {
                 const shouldPropagateAck = entry.propagateAck ?? this.config.propagateAckDefault ?? false;
                 await this.setForeignStateAsync(dest, {
-                    val: cached.val,
+                    val: this.resolveValue(entry, "forward", cached.val, dest),
                     ack: shouldPropagateAck ? cached.ack : false,
                     q: cached.q,
                 });
@@ -440,6 +459,64 @@ class DpCoupler extends utils.Adapter {
                 const message = err instanceof Error ? err.message : String(err);
                 this.log.warn(`dp-coupler: sync tick failed for ${dest}: ${message}`);
             }
+        }
+    }
+    // -----------------------------------------------------------------------
+    // Value pipeline (type coercion now; JSONata transform slots in here later)
+    // -----------------------------------------------------------------------
+    /**
+     * Resolves the value to write to a destination. Single seam shared by both write
+     * paths (event relay + periodic sync): read → (Feature B: transform) → coerce-to-target.
+     * `direction` selects the forward/reverse transform expression once Feature B lands;
+     * coercion itself depends only on the destination type. Feature B hooks in here
+     * without touching the call sites.
+     */
+    resolveValue(entry, direction, rawVal, destId) {
+        // Feature B (later): apply entry.transform (forward) / entry.transformReverse
+        // (reverse) here, before the cast. Params reserved for that step.
+        void entry;
+        void direction;
+        if (this.config.coerceTypesDefault ?? true) {
+            return this.coerceValue(rawVal, this.destType.get(destId));
+        }
+        return rawVal;
+    }
+    /**
+     * Casts a value to the destination datapoint's declared common.type following C
+     * conventions (number 0 ↔ false, non-0 ↔ true; false → 0, true → 1). Deterministic
+     * and parameter-free: it never fails on a value, it only declines (passes the value
+     * through) when it cannot interpret it. String interpretation is gated by the
+     * adapter-wide coerceStrings switch; matching types and "mixed"/unknown pass through.
+     */
+    coerceValue(rawVal, destType) {
+        if (destType === undefined || destType === "mixed")
+            return rawVal;
+        const coerceStrings = this.config.coerceStringsDefault ?? false;
+        switch (destType) {
+            case "boolean":
+                if (typeof rawVal === "boolean")
+                    return rawVal;
+                if (typeof rawVal === "number")
+                    return rawVal !== 0;
+                if (typeof rawVal === "string" && coerceStrings) {
+                    const s = rawVal.trim().toLowerCase();
+                    return !(s === "" || s === "0" || s === "false");
+                }
+                return rawVal;
+            case "number":
+                if (typeof rawVal === "number")
+                    return rawVal;
+                if (typeof rawVal === "boolean")
+                    return rawVal ? 1 : 0;
+                if (typeof rawVal === "string" && coerceStrings) {
+                    const n = Number(rawVal);
+                    return Number.isFinite(n) ? n : rawVal;
+                }
+                return rawVal;
+            case "string":
+                return typeof rawVal === "string" ? rawVal : String(rawVal);
+            default:
+                return rawVal;
         }
     }
     // -----------------------------------------------------------------------

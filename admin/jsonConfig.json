@@ -80,6 +80,30 @@
                     "label": "Enable flag default",
                     "help": "Initial state of the per-channel enabled datapoint. Can be overridden per entry via the 'enabled' field of the mapping entry and toggled at runtime via the channels.<id>.enabled datapoints.",
                     "def": true
+                },
+                "divider_2": {
+                    "type": "staticText",
+                    "text": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+                    "newLine": true
+                },
+                "hdr_coerce": {
+                    "type": "staticText",
+                    "text": "Type coercion casts the source value to the target datapoint's type before writing. Only acts on type mismatch; matching types are passed through unchanged.",
+                    "newLine": true
+                },
+                "coerceTypesDefault": {
+                    "type": "checkbox",
+                    "label": "Coerce types (bool ↔ number, C convention)",
+                    "help": "Cast between boolean and number following C conventions: number 0 → false / non-0 → true, false → 0 / true → 1. Applied on both event relay and periodic sync.",
+                    "def": true,
+                    "newLine": true
+                },
+                "coerceStringsDefault": {
+                    "type": "checkbox",
+                    "label": "Also interpret strings",
+                    "help": "Additionally interpret strings when coercing: \"\"/\"0\"/\"false\" → false, else → true; numeric strings → number. Unrecognized strings are passed through unchanged. Off by default (extra effort, opt-in).",
+                    "def": false,
+                    "disabled": "(!data.coerceTypesDefault)"
                 }
             }
         }
