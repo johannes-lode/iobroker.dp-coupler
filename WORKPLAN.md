@@ -263,6 +263,54 @@ sortieren) statt/neben dem heutigen Roh-`jsonEditor`.
 - [ ] Optional: Objekt-ID-Picker für source/target.
 - [ ] README/CLAUDE.md aktualisieren (neuer Editor, TSV-Format, kanonische Form falls geändert).
 
+## Initiale Synchronisation / Baseline-Transfer (Beschluss 2026-07-17)
+
+### Problem
+Rein flankengetriggerter Relay: Werte, die sich nie/selten ändern (OPC-UA/SPS),
+erreichen das Ziel nach dem Adapter-Start nie, weil keine Änderungsflanke auftritt.
+Es fehlt ein zustandsgetriggerter Einmal-Transfer (Baseline/Snapshot), der jeden
+gekoppelten Datenpunkt mindestens einmal pro Adapter-Leben ans Ziel bringt.
+
+### Design-Dokumentation (dauerhaft, im Repo)
+Vollständige Optionen-Abwägung (inkl. verworfener/zurückgestellter Varianten) in
+**[`docs/design/initial-synchronization-baseline.md`](docs/design/initial-synchronization-baseline.md)**.
+Kurzfassung der Beschlüsse:
+- **Verfügbarkeit (Upstream-Race):** Startup-Pass + Vollendung durch erstes Event
+  (`pendingBaseline`-Set), kein Timer/Polling. (Option B)
+- **Schreib-Semantik:** compare-then-write (nur bei Ungleichheit schreiben),
+  Ack-Semantik via `propagateAck` wie im Normalpfad. (Option 2)
+- **Konfigurierbarkeit:** immer aktiv, kein Schalter, kein `CONFIG_VERSION`-Bump.
+- **Sync-Tick:** bleibt unbedingt (kein Vergleich).
+- **Enable-Trigger (Nachschärfung):** `enabled` false→true überträgt, wenn Werte
+  ungleich **oder** noch nie baselined dieses Leben (dann `force`-Write). Behebt den
+  Fall „deaktiviert beim Start".
+- **Erweiterbarkeit (Option C, verschoben):** Startup-Pass als wiederverwendbare
+  Methode `runBaselinePass()` bauen → C bleibt additiv (~20–30 Zeilen, entkoppelt).
+  C-Trigger bewusst **kein Timer/Monoflop**, sondern Verbindungs-Events (z. B.
+  `alive` / `info.connection` des Upstream-Adapters), die auch im Normalbetrieb bei
+  Reconnect eine Re-Synchronisation auslösen. Auto-Discovery vs. Konfiguration der
+  Flags offen (nur skizziert). Details: Design-Record §5.
+
+### Aufgaben
+- [x] `src/main.ts`: Feld `pendingBaseline: Set<string>` (readonly, ephemeral).
+- [x] `baselineWrite(entry, sourceVal, q, ack, force)`-Helfer (compare-then-write /
+  force); gibt `true` zurück, wenn geschrieben wurde.
+- [x] `runBaselinePass()` als wiederverwendbare Methode (C-ready); Startup-Pass in
+  `onReady()` nach Subscribe + `lastState`-Vorbefüllung, vor `info.connection = true`;
+  Snapshot-Iteration; Log-Zusammenfassung.
+- [x] `onStateChange()`: Baseline-Vollendung via erstes Event (nach `enabled`-Check,
+  vor den Filtern) + Enable-Trigger im `enabledDpToSource`-Zweig (`force` =
+  `pendingBaseline.delete()`).
+- [x] Doku: CLAUDE.md (`onReady`/`onStateChange`/`runBaselinePass`/`baselineWrite`/neues
+  Feld + Abschnitt „Initial synchronization"), README-Abschnitt „Initial
+  synchronization (baseline)".
+- [x] Verifikations-Typecheck `tsc --noEmit` sauber.
+- [x] Code-unabhängige Testspezifikation (Black-Box) erstellt:
+  [`docs/testing/initial-synchronization-baseline.testspec.md`](docs/testing/initial-synchronization-baseline.testspec.md).
+  Test-Gerüst + Implementierung in separatem Chat (Repo-Vorgabe „keine Tests"
+  gilt bis zum Vorhandensein des Gerüsts).
+- [ ] Build/Deploy + Feldtest (User).
+
 ## Status
 
 **Implementierung Aufgaben 1–8 abgeschlossen** (Härtung + configVersion + Seeding),

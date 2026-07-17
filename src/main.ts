@@ -121,6 +121,7 @@ class DpCoupler extends utils.Adapter {
     private readonly enabledMap        = new Map<string, boolean>();
     private readonly enabledDpToSource = new Map<string, string>();
     private readonly destType          = new Map<string, ioBroker.CommonType>();
+    private readonly pendingBaseline   = new Set<string>();
     private syncTimer: ReturnType<typeof setInterval> | null = null;
     private syncIntervalMs = 0;
     private unloading = false;
@@ -343,6 +344,16 @@ class DpCoupler extends utils.Adapter {
             } catch { /* non-fatal */ }
         }
 
+        // Initial baseline transfer (level-triggered): bring every target to its
+        // source value once per adapter life, so datapoints that rarely/never change
+        // are synchronized at least once. Compare-then-write avoids needless
+        // re-actuation. Sources not yet available stay pending and are completed by
+        // their first event (see onStateChange) or a manual enable. runBaselinePass()
+        // is a reusable method — foresight for a future connection-driven re-check
+        // (see docs/design/initial-synchronization-baseline.md).
+        for (const sourceId of this.sourceIndex.keys()) this.pendingBaseline.add(sourceId);
+        await this.runBaselinePass();
+
         const unitMultipliers: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
         this.syncIntervalMs = (this.config.syncIntervalValue || 0)
             * (unitMultipliers[this.config.syncUnit ?? "ms"] ?? 1);
@@ -388,8 +399,21 @@ class DpCoupler extends utils.Adapter {
         // Own enabled datapoint changed: update cache and confirm command if needed.
         const enabledSource = this.enabledDpToSource.get(id);
         if (enabledSource !== undefined) {
+            const prev   = this.enabledMap.get(enabledSource);
             const newVal = Boolean(state.val);
             this.enabledMap.set(enabledSource, newVal);
+            // Enable transition (false→true): push the current source value.
+            // force = source was never baselined this life (e.g. disabled at start);
+            // otherwise compare-then-write corrects any drift accumulated while disabled.
+            // prev === false guards against the ack:true confirmation re-triggering this.
+            if (newVal && prev === false) {
+                const entry  = this.sourceIndex.get(enabledSource);
+                const cached = this.lastState.get(enabledSource);
+                if (entry && cached && cached.val !== null && cached.val !== undefined) {
+                    const force = this.pendingBaseline.delete(enabledSource);
+                    await this.baselineWrite(entry, cached.val, cached.q, cached.ack, force);
+                }
+            }
             if (!state.ack) {
                 // Confirm the write (ioBroker command pattern: adapter acknowledges with ack: true).
                 this.setStateAsync(id.slice(this.namespace.length + 1), { val: newVal, ack: true })
@@ -435,6 +459,16 @@ class DpCoupler extends utils.Adapter {
         // Enabled check: skip relay when channel is disabled.
         if (this.enabledMap.get(entry.source) === false) {
             dpcLog(`[dpc]   enabled=false → skip`);
+            return;
+        }
+
+        // Baseline completion: the first event of a still-pending source fulfills its
+        // initial baseline (bypassing the forwardOnAck/forwardChangesOnly filters), so a
+        // rarely-changing datapoint is synchronized on its first arrival after start.
+        if (forwardEntry && this.pendingBaseline.has(id)) {
+            this.pendingBaseline.delete(id);
+            dpcLog(`[dpc]   baseline completion via first event`);
+            await this.baselineWrite(entry, state.val, state.q, state.ack, false);
             return;
         }
 
@@ -504,6 +538,88 @@ class DpCoupler extends utils.Adapter {
                 const message = err instanceof Error ? err.message : String(err);
                 this.log.warn(`dp-coupler: sync tick failed for ${dest}: ${message}`);
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Initial baseline (level-triggered one-shot per adapter life)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Runs one baseline pass over all sources still pending a baseline this life.
+     * For each source with a cached value it aligns the target once (compare-then-
+     * write). Sources that are disabled, have no cached value yet, or vanish from the
+     * pending set mid-pass (completed by a concurrent event) are left pending and are
+     * completed later by their first event or a manual enable.
+     *
+     * Deliberately a reusable method (not an inline loop in onReady): a future
+     * connection-driven re-check (docs/design/initial-synchronization-baseline.md §5)
+     * re-invokes it without a refactor.
+     */
+    private async runBaselinePass(): Promise<void> {
+        let written = 0;
+        for (const sourceId of Array.from(this.pendingBaseline)) {
+            if (this.unloading) break;
+            if (!this.pendingBaseline.has(sourceId)) continue;          // completed concurrently
+            if (this.enabledMap.get(sourceId) === false) continue;      // stays pending
+            const cached = this.lastState.get(sourceId);
+            if (!cached || cached.val === null || cached.val === undefined) continue; // awaits first event
+            const entry = this.sourceIndex.get(sourceId);
+            if (!entry) { this.pendingBaseline.delete(sourceId); continue; }
+            this.pendingBaseline.delete(sourceId);
+            if (await this.baselineWrite(entry, cached.val, cached.q, cached.ack, false)) written++;
+        }
+        this.log.info(
+            `dp-coupler: initial baseline – ${written} written, ` +
+            `${this.pendingBaseline.size} pending (source not yet available).`
+        );
+    }
+
+    /**
+     * Writes a source value to its target as a baseline transfer. Unless `force` is
+     * set, it first reads the target and skips the write when the (coerced) values are
+     * already equal — synchronization means "make target equal source", so an equal
+     * target needs no write and no re-actuation. `force` (used only on a manual enable
+     * of a never-baselined channel) writes unconditionally. Returns true iff a write
+     * was issued. Shares the inFlight guard, coercion, and propagateAck semantics with
+     * the normal relay path; bypasses the forwardOnAck/forwardChangesOnly filters by
+     * design (a baseline is level-triggered).
+     */
+    private async baselineWrite(
+        entry: MappingEntry,
+        sourceVal: ioBroker.StateValue,
+        q: ioBroker.State["q"],
+        ack: ioBroker.State["ack"],
+        force: boolean,
+    ): Promise<boolean> {
+        const dest   = entry.target;
+        const outVal = this.resolveValue(entry, "forward", sourceVal, dest);
+
+        if (!force) {
+            try {
+                const current = await this.getForeignStateAsync(dest);
+                if (current && current.val === outVal) {
+                    dpcLog(`[dpc]   baseline ${entry.source} → ${dest}: equal (${outVal}) → skip`);
+                    return false; // already in sync
+                }
+            } catch { /* read failed → fall through and write */ }
+        }
+
+        this.inFlight.add(dest);
+        try {
+            const shouldPropagateAck = entry.propagateAck ?? this.config.propagateAckDefault ?? false;
+            await this.setForeignStateAsync(dest, {
+                val: outVal,
+                ack: shouldPropagateAck ? (ack ?? false) : false,
+                q,
+            });
+            this.log.debug(`dp-coupler: baseline ${entry.source} → ${dest} = ${outVal}${force ? " (forced)" : ""}`);
+            return true;
+        } catch (err: unknown) {
+            this.inFlight.delete(dest);
+            const message = err instanceof Error ? err.message : String(err);
+            this.log.warn(`dp-coupler: baseline write to ${dest} failed: ${message}`);
+            return false;
         }
     }
 

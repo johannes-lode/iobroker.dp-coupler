@@ -68,6 +68,11 @@ There are no automated tests.
 
 Single TypeScript source file: `src/main.ts` → compiled to `build/main.js`.
 
+Durable design-rationale records (including rejected/deferred options) live under
+`docs/design/` — see [`docs/design/README.md`](docs/design/README.md). Consult them
+before revisiting a settled design question; add a new record rather than deleting
+an old one when a decision is superseded.
+
 ### Configuration
 
 `this.config.mappingsRaw` (ioBroker DB) is the single source of truth — persisted automatically by ioBroker, edited via admin UI jsonEditor. Canonical form is a JSON **string**; a natively set JSON **array** is tolerated and self-healed (see below).
@@ -92,10 +97,13 @@ Mass deployment: `iobroker object set system.adapter.dp-coupler.0 native.mapping
 - `lastState: Map<string, ioBroker.State>` — last known state per source ID; populated at startup via `getForeignStateAsync` and updated on every forward-direction `onStateChange`. Shared cache for periodic sync and future enable-schalter `lastValue` datapoint.
 - `syncIntervalMs` — effective sync interval in ms, computed once in `onReady()` from `syncIntervalValue × unitMultiplier`; `0` when sync is disabled.
 - `syncTimer` — `setInterval` handle; `null` when periodic sync is disabled.
-- `unloading: boolean` — set to `true` in `onUnload()`; checked at the top of each `onSyncTick()` iteration to abort the loop cleanly during shutdown.
-- `onReady()`: creates `info` channel and `info.connection` via `setObjectAsync` → calls `loadMappings()` → if the config mapping is empty, attempts `readSeedMappings()` → builds the combined normalization `patch` (configVersion defaults + array self-heal + seeded mappings) and fires the single `extendForeignObjectAsync` write (consumes the seed file on success) → `persistMappingsFile(canonicalRaw)` → builds `sourceIndex` and `targetIndex` → `subscribeForeignStatesAsync(sources + bidir targets)` → pre-populates `lastState` via `getForeignStateAsync` for all sources → starts `syncTimer` if `syncInterval > 0` → sets `info.connection = true`.
-- `onStateChange()`: cycle guard (`inFlight`) → direction detection (source or reverse target) → updates `lastState` for forward direction → periodic-only guard (`syncInterval > 0 && !relayOnChange` → return) → `forwardOnAck` filter → `forwardChangesOnly` filter → `inFlight.add(destination)` → resolve `propagateAck` → `setForeignStateAsync`.
-- `onSyncTick()`: iterates `sourceIndex`; for each entry with a cached `lastState`, writes target via `setForeignStateAsync` (same `inFlight` guard as normal relay, respects `propagateAck`, bypasses `forwardOnAck`/`forwardChangesOnly` filters by design — heartbeat must always write).
+- `unloading: boolean` — set to `true` in `onUnload()`; checked at the top of each `onSyncTick()`/`runBaselinePass()` iteration to abort the loop cleanly during shutdown.
+- `pendingBaseline: Set<string>` — source IDs whose initial baseline transfer is still outstanding **in this adapter life** (ephemeral, not persisted). Populated with all sources in `onReady()`; an id is removed once its baseline is written or skipped-as-equal. Doubles as the "never transferred this life" flag for the enable trigger. See `docs/design/initial-synchronization-baseline.md`.
+- `onReady()`: creates `info` channel and `info.connection` via `setObjectAsync` → calls `loadMappings()` → if the config mapping is empty, attempts `readSeedMappings()` → builds the combined normalization `patch` (configVersion defaults + array self-heal + seeded mappings) and fires the single `extendForeignObjectAsync` write (consumes the seed file on success) → `persistMappingsFile(canonicalRaw)` → builds `sourceIndex` and `targetIndex` → `subscribeForeignStatesAsync(sources + bidir targets)` → pre-populates `lastState` via `getForeignStateAsync` for all sources → fills `pendingBaseline` with all sources and runs `runBaselinePass()` (initial baseline transfer) → starts `syncTimer` if `syncInterval > 0` → sets `info.connection = true`.
+- `onStateChange()`: cycle guard (`inFlight`) → own-`enabled`-DP branch (updates `enabledMap`; on a false→true transition triggers `baselineWrite` for the source — forced if still pending, else compare-then-write) → direction detection (source or reverse target) → updates `lastState`/`lastValue` for forward direction → `enabled` check → **baseline-completion**: if forward source is still in `pendingBaseline`, `baselineWrite` (compare-then-write, filters bypassed) and return → periodic-only guard (`syncInterval > 0 && !relayOnChange` → return) → `forwardOnAck` filter → `forwardChangesOnly` filter → `inFlight.add(destination)` → resolve `propagateAck` → `setForeignStateAsync`.
+- `onSyncTick()`: iterates `sourceIndex`; for each entry with a cached `lastState`, writes target via `setForeignStateAsync` (same `inFlight` guard as normal relay, respects `propagateAck`, bypasses `forwardOnAck`/`forwardChangesOnly` filters **and** the baseline compare by design — heartbeat must always write).
+- `runBaselinePass()`: iterates a snapshot of `pendingBaseline`; for each still-pending, enabled source with a cached value, calls `baselineWrite(..., force=false)` and drops it from `pendingBaseline`. Disabled / not-yet-available sources stay pending (completed later by first event or enable). Reusable by design — a future connection-driven re-check re-invokes it (design record §5).
+- `baselineWrite(entry, sourceVal, q, ack, force)`: level-triggered forward write. Unless `force`, reads the target and skips when the coerced values are already equal (no needless re-actuation); `force` (manual enable of a never-baselined channel) writes unconditionally. Shares `inFlight`/coercion/`propagateAck` with the relay path; bypasses the `forwardOnAck`/`forwardChangesOnly` filters. Returns true iff a write was issued.
 - `onUnload()`: sets `unloading = true` → clears `syncTimer` → fire-and-forget `setStateAsync("info.connection", false)` → calls `callback()` synchronously. **No async operations are awaited** — Redis/IPC ops hang indefinitely when js-controller tears down the connection during adapter restart.
 
 ### Mapping schema (`MappingEntry`)
@@ -132,6 +140,12 @@ When dp-coupler writes state X, it adds X to `inFlight` before the write. When `
 `configVersion` (default `0`, **io-package native only — not in jsonConfig**): self-heal/migration marker. When `< 1` at startup, `onReady()` fills any missing `NATIVE_DEFAULTS` and bumps it to `1` (via the shared normalization write), so the admin UI shows real values on fresh/migrated instances instead of blanks. Forward-compatible hook for future schema migrations. `NATIVE_DEFAULTS` (module-level const) mirrors the io-package `native` defaults minus `mappingsRaw`.
 
 `relayOnChange` (default `false`): only evaluated when `syncIntervalMs > 0`. `false` = periodic-only mode (no event relay). `true` = both periodic sync and event-driven relay. When `syncInterval === 0`, this flag has no effect — event-driven relay is always active.
+
+### Initial synchronization (baseline transfer)
+
+Because relaying is edge-triggered (change-only), a datapoint that rarely or never changes emits no event and would never reach its target after start. The **baseline transfer** closes this gap: a level-triggered one-shot per adapter life that brings every target to its current source value. Always active (no config switch, no `CONFIG_VERSION` bump); state is ephemeral (`pendingBaseline`), re-evaluated on every start.
+
+Completion has three triggers: (1) the startup `runBaselinePass()` for sources already available; (2) the first arriving event of a still-pending source (`onStateChange`); (3) a manual `enabled` false→true transition. Write policy is **compare-then-write** (skip when target already equals source) except on a manual enable of a never-baselined channel, which **forces** the write. Full option analysis (including deferred Option C: connection-event-driven re-check, timer only as last resort) in [`docs/design/initial-synchronization-baseline.md`](docs/design/initial-synchronization-baseline.md).
 
 ### Single-file architecture decision
 

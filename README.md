@@ -46,6 +46,24 @@ and can be overridden per mapping entry.
 A cycle guard (`inFlight` set) prevents bidirectional relay loops: states
 written by dp-coupler itself are never relayed back.
 
+### Initial synchronization (baseline)
+
+Relaying is edge-triggered: only *changes* are forwarded. A datapoint that
+rarely or never changes therefore emits no event and — without help — would
+never reach its target after a start. To close this gap, on every start the
+adapter performs a one-time **baseline transfer**: it brings each target to its
+current source value once, so every mapped datapoint is synchronized at least
+once per adapter lifetime, independent of change events.
+
+The baseline uses **compare-then-write**: it writes only when the target does
+not already equal the source, so it never re-actuates a target that is already
+in sync. Sources that are not yet available at start (e.g. an upstream adapter
+still connecting) are completed automatically by their first arriving value.
+Manually enabling a channel (`enabled` false→true) also pushes the current
+source value.
+
+This behaviour is always active and needs no configuration.
+
 Each mapping entry also gets two runtime datapoints in the adapter's own namespace
 (see [Channel datapoints](#channel-datapoints) below), allowing individual channels
 to be disabled at runtime without changing the configuration.
