@@ -296,19 +296,20 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   mit **booleschen** Optionswerten („→" / „↔"), damit `bidirectional` boolean bleibt.
   Weitere Felder als Spalten erst, wenn das Grundlayout steht.
 
-### Stufe 1 — Verifikation (risikoarm)
-- [ ] `admin/jsonConfig.json`: `mappingsTable` (`table`, `doNotSave`, `defaultFunc`,
-  `uniqueColumns: ["source"]`, **nur `export`**) mit den drei Spalten ergänzen;
+### Stufe 1 — Verifikation (risikoarm) — **abgeschlossen 2026-09-27**
+- [x] `admin/jsonConfig.json`: `mappingsTable` (`table`, `defaultFunc`,
+  `uniqueColumns: ["source"]`, **nur `export`**) mit den drei Spalten ergänzt;
   `objectId` für die beiden Pfadspalten. Labels englisch wie der Rest der Datei;
   `sort`/`filter` auf den Spalten aus (Sortieren würde die vom Bediener gewählte
-  Reihenfolge im gespeicherten Array anfassen).
-- [ ] `mappingsRaw` erhält `onChange` (`alsoDependsOn: ["mappingsTable"]`,
+  Reihenfolge im gespeicherten Array anfassen). `doNotSave` ist mit Option (b)
+  wieder entfallen — der Spiegel wird bewusst gespeichert.
+- [x] `mappingsRaw` erhält `onChange` (`alsoDependsOn: ["mappingsTable"]`,
   `ignoreOwnChanges`), aber **defensiv**: bei `data.mappingsTable === undefined` den
   gespeicherten String unverändert lassen — eine nie befüllte Tabelle darf die
   Konfiguration nicht leeren.
-- [ ] `jsonEditor` in dieser Stufe **noch editierbar** lassen (Notausgang, falls
+- [x] `jsonEditor` in dieser Stufe **noch editierbar** gelassen (Notausgang, falls
   `defaultFunc` nicht greift).
-- [ ] **Keine Sperre bei unparsbarem `mappingsRaw`, aber eine Anzeige** (Entscheidung
+- [x] **Keine Sperre bei unparsbarem `mappingsRaw`, aber eine Anzeige** (Entscheidung
   2026-09-27): wer per CLI einen JSON-String einfügt, trägt die Verantwortung; im GUI
   wird der Fehler als `infoBox` (`boxType: "error"`) gemeldet und darf zum Verlust
   führen, sobald die Tabelle zur Eingabe benutzt wird. Dazu liefert `defaultFunc` bei
@@ -340,11 +341,25 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   Tabelle bleibt leer, String bleibt bei Öffnen/Schließen unverändert.
 
 ### Stufe 2 — Festzurren
-- [ ] `jsonEditor`: `"readOnly": true`.
-- [ ] `"debug": true` aus den drei Feldern entfernen (nur Erprobungshilfe).
-- [ ] `validator` auf den beiden Pfadspalten (die Adapter-seitige Härtung steht als
-  eigener, vorangestellter Abschnitt „Robustheit gegen unvollständige Mapping-Einträge").
-- [ ] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
+- [x] `jsonEditor`: `"readOnly": true`, Label auf „Mappings (JSON view)" umbenannt
+  (der Knopf heißt damit nicht mehr „Editor", was er nicht mehr ist).
+- [x] `"debug": true` aus allen Feldern entfernt (nur Erprobungshilfe).
+- [x] `validator` auf den beiden Pfadspalten — **bei jeder Eingabe**
+  (Entscheidung 2026-09-27; ein Prüf-Button wäre nur als `sendTo` möglich, bräuchte
+  also Adapter-Code und eine laufende Instanz, obwohl die Prüfung rein syntaktisch
+  ist). Dieselbe Regel wie `isPlausibleStateId()` im Adapter, mit derselben
+  Copy+Paste-Toleranz. Ohne `validatorNoSaveOnError`: die Zeile wird rot markiert,
+  aber das Speichern anderer Änderungen nicht blockiert — der Adapter verwirft eine
+  unbrauchbare Zeile ohnehin mit Warnung.
+- [x] **Spalten für die optionalen Eigenschaften** ergänzt: `_comment` (Text),
+  `enabled`, `forwardOnAck`, `forwardChangesOnly`, `propagateAck`. Letztere vier sind
+  **dreiwertig** — „(default)" = `""`, „yes" = `true`, „no" = `false`. Begründung: eine
+  Checkbox könnte „nicht gesetzt" nicht von „ausgeschaltet" unterscheiden und würde beim
+  Anlegen einer Zeile stillschweigend die adapterweiten Defaults überschreiben.
+  `normalizeFlag("")` liefert „nicht gesetzt", `normalizeEntry()` entfernt den Schlüssel
+  — der Default bleibt also wirklich Default. Die Kommentar-Spalte ist nötig, weil
+  `_comment` mit dem read-only-JSON-View sonst nur noch per CLI pflegbar wäre.
+- [x] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
   `dependencies: [{"js-controller": ">=6.0.11"}]` (Konvention an modbus/hm-rpc geprüft:
   admin gehört in `globalDependencies`).
 - [ ] Version-Bump + News-Eintrag (en/de); `npm run build` und `build/` mitcommitten.

@@ -28,6 +28,8 @@
 	      "link": "https://raw.githubusercontent.com/johannes-lode/iobroker.dp-coupler/main/LICENSE"
 	    },
     "mode": "daemon",
+    "dependencies": [{ "js-controller": ">=6.0.11" }],
+    "globalDependencies": [{ "admin": ">=7.8.0" }],
     "adminUI": { "config": "json" },
     "type": "general",
     "icon": "admin/dp-coupler.png",

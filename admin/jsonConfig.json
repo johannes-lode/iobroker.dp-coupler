@@ -8,9 +8,9 @@
             "items": {
                 "mappingsRaw": {
                     "type": "jsonEditor",
-                    "label": "Mappings (JSON array)",
-                    "help": "Canonical storage form. Edits in the table below are written back here.",
-                    "debug": true,
+                    "label": "Mappings (JSON view)",
+                    "readOnly": true,
+                    "help": "Canonical storage form, read-only. The table below is the editor; its changes are written back here. Open to inspect or copy the JSON.",
                     "onChange": {
                         "alsoDependsOn": ["mappingsTable"],
                         "calculateFunc": "return data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2);",
@@ -23,8 +23,7 @@
                     "closeable": false,
                     "newLine": true,
                     "title": "Stored mapping is not a valid JSON array",
-                    "text": "The table stays empty as long as the stored value cannot be parsed. Repair it in the JSON editor above. Caution: entering a row in the table replaces the stored value and discards the unparsable content.",
-                    "debug": true,
+                    "text": "The table stays empty as long as the stored value cannot be parsed. Repair it via the command line. Caution: entering a row in the table replaces the stored value and discards the unparsable content.",
                     "hidden": "try { return Array.isArray(JSON.parse(data.mappingsRaw || '[]')); } catch (e) { return false; }"
                 },
                 "mappingsTable": {
@@ -34,20 +33,22 @@
                     "uniqueColumns": ["source"],
                     "showFirstAddOnTop": true,
                     "export": true,
-                    "debug": true,
+                    "compact": true,
                     "defaultFunc": "try { const v = JSON.parse(data.mappingsRaw || '[]'); return Array.isArray(v) ? v : undefined; } catch (e) { return undefined; }",
                     "items": [
                         {
                             "type": "objectId",
                             "attr": "source",
                             "title": "Source",
-                            "width": "45%"
+                            "width": "22%",
+                            "validator": "const v = (data.source || '').trim(); return v !== '' && !/\\s/.test(v) && !v.startsWith('.') && !v.endsWith('.') && !v.includes('..');",
+                            "validatorErrorText": "Required: a state ID without blanks, without a leading/trailing dot and without '..'"
                         },
                         {
                             "type": "select",
                             "attr": "bidirectional",
                             "title": "↔",
-                            "width": "10%",
+                            "width": "5%",
                             "options": [
                                 {"label": "→", "value": false},
                                 {"label": "↔", "value": true}
@@ -57,7 +58,59 @@
                             "type": "objectId",
                             "attr": "target",
                             "title": "Target",
-                            "width": "45%"
+                            "width": "22%",
+                            "validator": "const v = (data.target || '').trim(); return v !== '' && !/\\s/.test(v) && !v.startsWith('.') && !v.endsWith('.') && !v.includes('..');",
+                            "validatorErrorText": "Required: a state ID without blanks, without a leading/trailing dot and without '..'"
+                        },
+                        {
+                            "type": "text",
+                            "attr": "_comment",
+                            "title": "Comment",
+                            "width": "13%"
+                        },
+                        {
+                            "type": "select",
+                            "attr": "enabled",
+                            "title": "Enabled",
+                            "width": "9%",
+                            "options": [
+                                {"label": "(default)", "value": ""},
+                                {"label": "yes", "value": true},
+                                {"label": "no", "value": false}
+                            ]
+                        },
+                        {
+                            "type": "select",
+                            "attr": "forwardOnAck",
+                            "title": "On ACK",
+                            "width": "9%",
+                            "options": [
+                                {"label": "(default)", "value": ""},
+                                {"label": "yes", "value": true},
+                                {"label": "no", "value": false}
+                            ]
+                        },
+                        {
+                            "type": "select",
+                            "attr": "forwardChangesOnly",
+                            "title": "Changes only",
+                            "width": "10%",
+                            "options": [
+                                {"label": "(default)", "value": ""},
+                                {"label": "yes", "value": true},
+                                {"label": "no", "value": false}
+                            ]
+                        },
+                        {
+                            "type": "select",
+                            "attr": "propagateAck",
+                            "title": "Propagate ACK",
+                            "width": "10%",
+                            "options": [
+                                {"label": "(default)", "value": ""},
+                                {"label": "yes", "value": true},
+                                {"label": "no", "value": false}
+                            ]
                         }
                     ]
                 }
