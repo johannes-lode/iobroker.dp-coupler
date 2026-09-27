@@ -10,9 +10,10 @@
                     "type": "jsonEditor",
                     "label": "Mappings (JSON array)",
                     "help": "Canonical storage form. Edits in the table below are written back here.",
+                    "debug": true,
                     "onChange": {
                         "alsoDependsOn": ["mappingsTable"],
-                        "calculateFunc": "data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2)",
+                        "calculateFunc": "return data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2);",
                         "ignoreOwnChanges": true
                     }
                 },
@@ -23,7 +24,8 @@
                     "newLine": true,
                     "title": "Stored mapping is not a valid JSON array",
                     "text": "The table stays empty as long as the stored value cannot be parsed. Repair it in the JSON editor above. Caution: entering a row in the table replaces the stored value and discards the unparsable content.",
-                    "hidden": "(() => { try { return Array.isArray(JSON.parse(data.mappingsRaw || '[]')); } catch (e) { return false; } })()"
+                    "debug": true,
+                    "hidden": "try { return Array.isArray(JSON.parse(data.mappingsRaw || '[]')); } catch (e) { return false; }"
                 },
                 "mappingsTable": {
                     "type": "table",
@@ -33,7 +35,8 @@
                     "uniqueColumns": ["source"],
                     "showFirstAddOnTop": true,
                     "export": true,
-                    "defaultFunc": "(() => { try { const v = JSON.parse(data.mappingsRaw || '[]'); return Array.isArray(v) ? v : undefined; } catch (e) { return undefined; } })()",
+                    "debug": true,
+                    "defaultFunc": "try { const v = JSON.parse(data.mappingsRaw || '[]'); return Array.isArray(v) ? v : undefined; } catch (e) { return undefined; }",
                     "items": [
                         {
                             "type": "objectId",
