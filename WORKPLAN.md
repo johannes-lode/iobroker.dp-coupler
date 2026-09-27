@@ -389,10 +389,42 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
 - [x] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
   `dependencies: [{"js-controller": ">=6.0.11"}]` (Konvention an modbus/hm-rpc geprüft:
   admin gehört in `globalDependencies`).
-- [ ] Version-Bump + News-Eintrag (en/de); `npm run build` und `build/` mitcommitten.
-- [ ] README (Abschnitt „Mapping tab", Import/Export) und CLAUDE.md (Abschnitt
-  „Admin UI" um `doNotSave`/`defaultFunc`/`calculateFunc`/`readOnly` ergänzen)
-  aktualisieren.
+- [x] Version-Bump auf **0.3.0** + News-Eintrag (en/de) in `io-package.json` und
+  `package.json`. Kein `npm run build` nötig — `src/` ist gegenüber dem
+  Härtungs-Commit unverändert, die Stufe betraf nur `admin/` und `io-package.json`.
+- [x] README (Abschnitt „Mapping tab" auf den Tabellen-Editor umgeschrieben,
+  Validierungs-/Verwerfungsregeln ergänzt, Mass-deployment um den
+  `mappingsTable`-Spiegel ergänzt) und CLAUDE.md (Abschnitt „Admin UI" beschreibt
+  jetzt den tatsächlichen Aufbau des Mapping-Panels samt dreiwertiger Flag-Spalten)
+  aktualisiert.
+
+### Stufe 2 — abgeschlossen mit Version 0.3.0 (2026-09-27)
+
+### Internationalisierung der Oberfläche (eigenes Paket, Beschluss 2026-09-27)
+
+Bewusst **nach** 0.3.0 als eigener Patch: der Umbau fasst jede Textzeile der
+jsonConfig an, und das Admin-Schema verhält sich mit `"i18n": true` anders
+(Übersetzungsdateien müssen vorhanden und ladbar sein) — das braucht einen eigenen
+Testlauf und soll die Feature-Historie nicht verwässern.
+
+**Festlegungen:** nur **Deutsch und Englisch** (offizielles ioBroker-Repo ist vorerst
+kein Ziel; die Community entscheidet das ggf. später). Übersetzt werden die
+**Admin-Oberfläche** und `io-package.json` (`titleLang`, `desc`, News). Die
+**Log-Meldungen des Adapters bleiben englisch** — ioBroker-Konvention, und es
+erleichtert die Suche nach Fehlermeldungen.
+
+**Hintergrund zum heutigen Mischbild:** der Admin schickt *jeden* Text durch
+`I18n.t()`. Steht ein Wort zufällig in der globalen Admin-Übersetzungstabelle
+(„Source", „Enabled", „Comment"), erscheint es übersetzt, der Rest englisch. Kein
+Fehler, aber ein Grund, es sauber zu machen.
+
+- [ ] `admin/i18n/de/translations.json` und `.../en/...` anlegen; alle Labels,
+  Hilfetexte, Tooltips, Spaltentitel, die Legende und die Fehlerbox auf Schlüssel
+  umstellen; Wurzel-`"i18n"` von `false` auf `true`.
+- [ ] Admin-Validierung erneut prüfen (das Schema meldet Blocker einzeln).
+- [ ] Prüfen, ob die Spaltentitel nach der Umstellung noch in die Breiten passen —
+  deutsche Begriffe sind meist länger („on change" → „nur bei Änderung").
+- [ ] Version 0.3.1 (Patch) + News-Eintrag.
 
 ### Stufe 3 — später
 - [ ] **Round-Trip nicht dargestellter Felder erneut bewerten.** Datenverlust bei

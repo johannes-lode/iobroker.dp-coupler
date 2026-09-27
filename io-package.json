@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "news": {
+      "0.3.0": {
+        "en": "Row-wise table editor for the mappings in the admin UI, with datapoint pickers and per-entry columns; the JSON is now a read-only view with a copy button. Malformed mapping entries can no longer disturb the adapter: they are dropped with a logged reason while all other entries keep relaying.",
+        "de": "Zeilenweiser Tabellen-Editor für die Kopplungen im Admin-UI, mit Datenpunkt-Auswahl und Spalten für die Eintrags-Optionen; das JSON ist jetzt eine schreibgeschützte Ansicht mit Kopier-Knopf. Fehlerhafte Mapping-Einträge stören den Adapter nicht mehr: sie werden mit protokollierter Begründung verworfen, alle übrigen Kopplungen laufen weiter."
+      },
       "0.2.0": {
         "en": "Tolerant mappingsRaw (JSON string or native array) with self-heal; config default normalization via configVersion; one-shot seeding from mappings.seed.json",
         "de": "Toleranter mappingsRaw (JSON-String oder natives Array) mit Self-Heal; Konfig-Default-Normalisierung über configVersion; einmaliges Seeding aus mappings.seed.json"

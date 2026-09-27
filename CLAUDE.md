@@ -75,7 +75,7 @@ an old one when a decision is superseded.
 
 ### Configuration
 
-`this.config.mappingsRaw` (ioBroker DB) is the single source of truth — persisted automatically by ioBroker, edited via admin UI jsonEditor. Canonical form is a JSON **string**; a natively set JSON **array** is tolerated and self-healed (see below).
+`this.config.mappingsRaw` (ioBroker DB) is the single source of truth — persisted automatically by ioBroker, edited via the admin UI table (the JSON itself is a read-only view). Canonical form is a JSON **string**; a natively set JSON **array** is tolerated and self-healed (see below).
 
 `parseMappings(raw, label)`: tolerant parse+validate helper. A string is `JSON.parse`d; an array/object is taken as-is. Validates `Array.isArray`, filters entries via `isMappingEntry`, then normalizes each survivor via `normalizeEntry()`. Shared by `loadMappings()` and `readSeedMappings()`. Returns `{ valid, parsed }` — `parsed` is the **unfiltered** array, needed so the self-heal never prunes the stored configuration — or `null` on unrecoverable error.
 
@@ -95,7 +95,7 @@ an old one when a decision is superseded.
 
 **The canonical string is never pruned.** `canonicalRaw` is built from the *unfiltered* input (the stored string as-is, the raw native array, or the raw seed content) — never from the validated list. A rejected entry therefore stays in the configuration and remains visible and fixable in the admin editor, rather than vanishing silently; in the seed case it would otherwise be unrecoverable, because the seed file is consumed.
 
-Mass deployment: `iobroker object set system.adapter.dp-coupler.0 native.mappingsRaw="$(jq -Rs . mappings.json)"` (canonical) or `"$(cat mappings.json)"` (native array, self-healed), or paste JSON into the admin UI. See README "Mass deployment" for import/export/seeding.
+Mass deployment: `iobroker object set system.adapter.dp-coupler.0 native.mappingsRaw="$(jq -Rs . mappings.json)"` (canonical) or `"$(cat mappings.json)"` (native array, self-healed), or enter the couplings in the admin UI table. See README "Mass deployment" for import/export/seeding.
 
 ### `DpCoupler extends utils.Adapter`
 
@@ -166,9 +166,18 @@ Completion has three triggers: (1) the startup `runBaselinePass()` for sources a
 
 ### Admin UI
 
-`admin/jsonConfig.json`: root type is `"tabs"`, containing a panel with a `"jsonEditor"` field (key `mappingsRaw`).
+`admin/jsonConfig.json`: root type is `"tabs"`. The **Mapping** panel contains, in this order:
 
-**Critical:** the valid ioBroker jsonConfig type for JSON editing is `"jsonEditor"`. The types `"textarea"` and `"json"` are NOT valid and cause an admin validation error ("dp-coupler has an invalid jsonConfig"). No UI-side validation — validation happens in `loadMappings()` at adapter start.
+1. `info_invalid_json` — an `infoBox` that appears only when `mappingsRaw` is not a parsable JSON array (`hidden` JS function).
+2. `mappingsTable` — the `table` editor, bound to the adapter-maintained mirror (see Configuration). Columns: `source` / `bidirectional` / `target` / `_comment` / `enabled` / `forwardOnAck` / `forwardChangesOnly` / `propagateAck`. `defaultFunc` fills it from `mappingsRaw` when no mirror exists yet, returning `undefined` (not `[]`) on unparsable input so opening the dialog cannot destroy a broken string.
+3. `legend_columns` — `staticText` legend (column headings have no tooltips, see below).
+4. `mappingsRaw` — `type: "text"` with `readOnly`, `copyToClipboard`, `minRows`/`maxRows`: the canonical string as a read-only view and the export path. Its `onChange.calculateFunc` writes the table back into the string, guarded by `data.mappingsTable === undefined` so an unpopulated table cannot empty the configuration.
+
+The coupling is deliberately asymmetric (string → table once on open, table → string on every edit), which is what prevents a feedback cycle. Full rationale: `docs/design/admin-ui-mapping-table.md`.
+
+**Three-valued flag columns:** `enabled`/`forwardOnAck`/`forwardChangesOnly`/`propagateAck` are `select`s with `""` = "(def)", `true`, `false` — a checkbox could not distinguish "not set" from "off" and would silently override the adapter defaults on every new row. `normalizeFlag("")` yields "not set" and `normalizeEntry()` drops the key.
+
+**Critical:** the valid ioBroker jsonConfig type for a JSON *editor* is `"jsonEditor"` — `"textarea"` and `"json"` are NOT valid and cause an admin validation error ("dp-coupler has an invalid jsonConfig"). UI-side validation exists only as column `validator`s; the authoritative validation stays in `parseMappings()` at adapter start.
 
 **Critical:** the jsonConfig attribute for a field's default value is `"default"`, NOT `"def"` (`def` is the state-object `common` key, a different schema). Most field types silently ignore an unknown `def` (defaults then never apply from the UI — they come from `io-package.json` `native` + the configVersion self-heal instead), but `"slider"` enforces `additionalProperties: false` and hard-fails admin validation on `def`. Use `default` for every jsonConfig field.
 

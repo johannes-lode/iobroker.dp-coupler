@@ -79,7 +79,28 @@ On every successful start the current configuration is also written to
 
 ### Mapping tab
 
-Enter a JSON array of mapping objects in the **Mapping** tab:
+The **Mapping** tab holds a row-wise table editor — one row per coupling:
+
+| Column | Meaning |
+|---|---|
+| **Source** | datapoint to read from; pick it from the object dialog or paste the path |
+| **↔** | `→` unidirectional, `↔` bidirectional |
+| **Target** | datapoint to write to |
+| **Comment** | free text (stored as `_comment`), multi-line |
+| **Enabled**, **on ACK**, **on change**, **pass ACK** | per-entry overrides; `(def)` means "use the adapter default from the Defaults tab" |
+
+Rows can be added, deleted and reordered; the table exports to CSV. Paths are
+validated as you type: a path must not be empty, must not contain blanks and
+must not start or end with a dot.
+
+Below the table, **Mappings (JSON view)** shows the stored configuration in its
+canonical form. It is **read-only** — the table is the editor — and has a copy
+button, which is the simplest way to export the configuration. To *import* one,
+use the command line (see [Mass deployment](#mass-deployment)) or the seed file.
+
+The stored form is that JSON array, and it remains the single source of truth:
+
+
 
 ```json
 [
@@ -115,7 +136,17 @@ Enter a JSON array of mapping objects in the **Mapping** tab:
 | `forwardChangesOnly`| no       | adapter default  | Override: relay only if `val` actually changed (suppress re-writes)                |
 | `propagateAck`      | no       | adapter default  | Override: write target with `ack: true` when source had `ack: true`                |
 
-Unknown keys (e.g. `_comment`) are silently ignored.
+Unknown keys are ignored by the adapter and preserved across edits, so notes you
+add by hand survive a round trip through the table.
+
+**Entries that cannot be used are dropped, never fatal.** `source` and `target`
+must be non-empty, plausible state IDs (no blanks, no leading/trailing dot, no
+`..`), and an entry may not couple a datapoint to itself. A rejected entry is
+logged with its reason and skipped; **all other entries keep relaying**, and the
+entry stays in the stored configuration so you can see and correct it. Optional
+flags are interpreted tolerantly (`true`/`"true"`/`"yes"`/`1` and the negative
+spellings); a value that cannot be interpreted is ignored with a warning and the
+adapter default applies.
 
 **Note for bidirectional entries:** `forwardOnAck`, `forwardChangesOnly`, and
 `propagateAck` apply to both relay directions of the same entry.
@@ -175,10 +206,14 @@ without waiting for the next source change.
 To deploy the same configuration across multiple ioBroker instances without
 using the admin UI. Replace `dp-coupler.0` with the target instance identifier.
 
-`mappingsRaw` is canonically a JSON **string** (that is what the admin jsonEditor
-saves). The adapter additionally tolerates a natively set JSON **array** and
-self-heals it back into the canonical pretty-printed string on the next start
-(one config restart), so the jsonEditor never shows a red "invalid JSON".
+`mappingsRaw` is canonically a JSON **string** (that is what the admin UI saves).
+The adapter additionally tolerates a natively set JSON **array** and self-heals it
+back into the canonical pretty-printed string on the next start (one config
+restart), so the JSON view never shows an unparsable value.
+
+The adapter also mirrors the canonical string into `native.mappingsTable`, which
+is what the admin table binds to. It is derived state, written by the adapter and
+never read at runtime — do not set it by hand; setting `mappingsRaw` is enough.
 
 ```bash
 # Import (canonical string – always works):
