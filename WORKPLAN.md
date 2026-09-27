@@ -219,49 +219,124 @@ Erst umsetzen, wenn Cast im Feld läuft. Pipeline-Naht steht dann bereits.
 - [ ] README/Doku: Beispiele (Enum-Mapping, Schwellwert Zahl→Bool, String-Parsing) +
   bidirektionale forward/reverse-Warnung.
 
-## Feature-Request: Admin-UI-Tabellen-Editor für Einträge (2026-07-02)
+## Robustheit gegen unvollständige Mapping-Einträge (Beschluss 2026-09-26)
 
-### Ziel
-Ein komfortabler Admin-UI-Tab für die Mapping-Einträge im Stil des **Register-Editors des
-MODBUS-Adapters** (jsonConfig-`table`-Typ: editierbares Grid mit Spalten, Zeilen add/delete/
-sortieren) statt/neben dem heutigen Roh-`jsonEditor`.
+**Vorangestellt als eigener Commit vor der GUI-Arbeit.** Begründung: der „+"-Button der
+geplanten Tabelle macht die noch nicht ausgefüllte Zeile zum Alltagsfall; die Härtung muss
+vorher stehen, damit die GUI-Erprobung nicht auf einem bekannten Absturzweg stattfindet.
 
-### Entscheidungen (2026-07-02)
-- **Tabelle primär, Roh-JSON-Tab bleibt.** Die Tabelle ist der komfortable Editor; der
-  `jsonEditor` (`mappingsRaw`) bleibt als zweiter Tab für Bulk-Edit, Import/Export, Power-User.
-- **Spalten: alle `MappingEntry`-Felder.** `source`/`target` (Text) + `bidirectional`,
-  `forwardOnAck`, `forwardChangesOnly`, `propagateAck`, `enabled` als Checkbox-Spalten.
-- **Datenformate außen: JSON bleibt kanonisch; TSV kommt dazu** — als alternatives
-  Import/Export-/Seed-Dateiformat **und** als **Paste-Feld im UI** (direktes Einfügen aus
-  Tabellenkalkulation).
+### Leitsatz
+Ein Mapping-Eintrag mit fehlenden oder leeren Pflichtfeldern darf **niemals** zu
+fehlerhaftem Laufzeitverhalten führen. Zulässige Wirkung ist ausschließlich: Eintrag wird
+verworfen, Grund wird protokolliert, **alle übrigen Einträge laufen unverändert weiter**.
+Pflichtfelder sind `source` und `target`; alle anderen Felder sind optional und haben
+Adapter-Defaults.
 
-### Offene Design-Punkte (bei Umsetzung klären)
-- **Speicher-Spannung Tabelle ↔ kanonischer String (wichtigster Punkt):** jsonConfig-`table`
-  bindet an ein **Array**-Attribut; `mappingsRaw` ist aber kanonisch ein **String** und der
-  Self-Heal wandelt ein natives Array beim Start in einen String zurück (Abschnitt
-  „Configuration"/onReady). Eine direkt an `mappingsRaw` gebundene Tabelle würde durch den
-  Self-Heal re-stringifiziert und beim nächsten Öffnen nicht mehr befüllt. Optionen:
-  (a) Self-Heal anpassen: natives Array **belassen**, wenn die Tabelle der Editor ist
-  (kanonische Form ggf. auf Array umstellen); (b) Tabelle an ein **separates** Array-Native-Feld
-  binden und `mappingsRaw` als String-Spiegel führen → Reconciliation/zwei Quellen;
-  (c) Roh-JSON-Tab und Tabelle über einen Konvertierungs-Schritt koppeln. → Entscheidung bei
-  Umsetzung; Option (a) wirkt am kohärentesten (der tolerante Loader akzeptiert Arrays bereits).
-- **Datenpunkt-Auswahl:** `source`/`target` als Objekt-ID-Picker/Autocomplete statt Freitext
-  (bessere UX, MODBUS-nah) — als Ausbaustufe prüfen (jsonConfig-Fähigkeiten).
-- **Spalten für Feature B:** sobald JSONata (`transform`/`transformReverse`) kommt, Tabelle um
-  diese Spalten erweitern; Grid-Design von Anfang an erweiterbar halten.
-- **TSV-Definition:** Spaltenreihenfolge/Header 1:1 auf `MappingEntry`; Booleans-Kodierung
-  (`true`/`false` vs. `1`/`0`) und Escaping festlegen; verlustfreier JSON↔TSV-Round-Trip.
-- **Validierung:** Tabelle gibt Struktur vor, aber `loadMappings()`/`parseMappings()` bleibt die
-  maßgebliche Validierung beim Start (source/target Pflicht).
+### Bekannter Fehlerpfad (Anlass)
+`isMappingEntry()` prüft heute nur `typeof === "string"` — der Leerstring besteht diese
+Prüfung. Folge einer gespeicherten Leerzeile: `sourceToChannelId("")` liefert `""`, damit
+entsteht in `onReady()` ein `setObjectAsync("channels.", …)` — eine Objekt-ID mit Punkt am
+Ende — in einem `await` **ohne** try/catch. Wirft dieser Aufruf, bricht `onReady()` ab:
+kein `ready`, kein `info.connection`, **gar kein Relay mehr**. Ein einzelner unvollständiger
+Eintrag legt damit den gesamten Adapter still — genau das, was der Leitsatz ausschließt.
 
-### Aufgaben (später)
-- [ ] `admin/jsonConfig.json`: `table`-Feld mit allen Spalten; zweiter Tab „Raw JSON" mit dem
-  bestehenden `jsonEditor`.
-- [ ] Speicher-Spannung gemäß gewählter Option lösen (Self-Heal/Ablage anpassen).
-- [ ] TSV: Import/Export-/Seed-Unterstützung + UI-Paste-Feld inkl. JSON↔TSV-Konvertierung.
-- [ ] Optional: Objekt-ID-Picker für source/target.
-- [ ] README/CLAUDE.md aktualisieren (neuer Editor, TSV-Format, kanonische Form falls geändert).
+### Aufgaben
+- [ ] **Schicht 1 — Validierung vorne.** `isMappingEntry()` verschärfen: `source`/`target`
+  müssen getrimmt nicht leer sein. Die verwerfende Warnung pro Eintrag gibt es in
+  `parseMappings()` bereits; sie soll den Grund benennen. Damit enthalten `sourceIndex`
+  und `targetIndex` nur noch geprüfte Einträge.
+- [ ] **Schicht 2 — Fehlerisolierung (defense in depth).** Den Kanal-Aufbau-Loop in
+  `onReady()` pro Eintrag in try/catch fassen: ein unerwarteter Fehler (eine ungültige ID,
+  die Schicht 1 nicht erwischt) darf nur diesen einen Eintrag verlieren, nicht `onReady()`
+  abbrechen. Das ist der eigentliche Kern des Leitsatzes — Schicht 1 behebt den *bekannten*
+  Fall, Schicht 2 auch die unbekannten.
+- [ ] **Selbstkopplung** `source === target` verwerfen (schreibt sich selbst; der
+  `inFlight`-Guard verhindert zwar die Endlosschleife, der Eintrag ist aber sinnlos).
+- [ ] **Typ-Plausibilität der optionalen Flags** — Entscheidung 2026-09-26: **tolerant
+  normalisieren**, niemals wegen eines *optionalen* Feldes einen Eintrag verwerfen.
+  Anlass: `bidirectional` wird strikt gegen `=== true` getestet, ein String `"true"`
+  (wie ihn ein CSV-Import liefert) wirkt also still als `false`; die übrigen Flags gehen
+  über `??` in truthy-Tests, ein String `"no"` wirkte damit als `true`. Uninterpretierbare
+  Werte werden verworfen (Warnung) → Adapter-Default greift, statt still das Gegenteil.
+- [ ] **Self-Heal bereinigt nicht** — Entscheidung 2026-09-26. Heute wird `canonicalRaw`
+  bei Seeding und bei nativem Array aus der **gefilterten** Liste erzeugt, im String-Fall
+  dagegen unverändert übernommen. Vereinheitlichen auf „nie automatisch bereinigen": die
+  Konfiguration behält jeden Eintrag, den der Bediener geschrieben hat — auch den
+  abgelehnten, damit er ihn im Editor sieht und korrigieren kann.
+- [ ] **Pfadprüfung**: getrimmt nicht leer **plus** minimale ID-Plausibilität (kein
+  inneres Leerzeichen, kein führender/abschließender Punkt, kein doppelter Punkt) —
+  genau die Formen, die ungültige Objekt-IDs erzeugen. Bewusst **keine** Vollvalidierung
+  von ioBroker-IDs. Umgebendes Leerzeichen aus Copy+Paste wird getrimmt, nicht verworfen.
+- [ ] `npm run build`, `build/` mitcommitten (Deployment-Konvention), **eigener Commit**.
+- [ ] Black-Box-Testspezifikation unter `docs/testing/` analog zum Baseline-Testspec.
+
+## Admin-UI-Tabellen-Editor für Mappings (Beschluss 2026-09-26)
+
+Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Abwägung
+(inkl. verworfener Wege und der offenen Annahmen) im Design-Record
+**[`docs/design/admin-ui-mapping-table.md`](docs/design/admin-ui-mapping-table.md)**.
+
+### Festlegungen
+- **`mappingsRaw` bleibt kanonisch ein String.** Grund: ein natives Array lässt sich
+  nicht zuverlässig per CLI setzen — das ist der Deployment-Pfad dieses Adapters.
+  Alles Weitere arbeitet um diese Randbedingung herum.
+- **Weg: deklarative jsonConfig-`table`** im bestehenden Mapping-Panel, unterhalb des
+  JSON-Editor-Buttons. Eine eigene React-Komponente (`type: "custom"`) bleibt als
+  Ausbaustufe offen; eine komplett eigene Admin-Seite (der tatsächliche MODBUS-Weg —
+  MODBUS nutzt **kein** jsonConfig) ist verworfen.
+- **Kopplung asymmetrisch („Variante α"):** String → Tabelle einmalig beim Öffnen per
+  `defaultFunc`; Tabelle → String laufend per `onChange.calculateFunc`. Kein Zyklus,
+  weil es in der Rückrichtung keinen stehenden Trigger gibt. Das Hilfsattribut trägt
+  `doNotSave: true` → kein neues `native`-Feld, **kein `CONFIG_VERSION`-Bump**.
+- **JSON-Editor wird `readOnly`** — bleibt Träger der Berechnung, dient als Anzeige und
+  als manueller JSON-**Export** (öffnen, markieren, kopieren). **Import** bleibt vorerst
+  CLI + Seed-Datei (+ eingebauter CSV-Import der Tabelle); ein UI-JSON-Import ist dafür
+  bewusst keinen Adapter-Code wert.
+- **Spalten zunächst nur `source` / `↔` / `target`.** Richtungsumschalter als `select`
+  mit **booleschen** Optionswerten („→" / „↔"), damit `bidirectional` boolean bleibt.
+  Weitere Felder als Spalten erst, wenn das Grundlayout steht.
+
+### Stufe 1 — Verifikation (risikoarm)
+- [ ] `admin/jsonConfig.json`: `mappingsTable` (`table`, `doNotSave`, `defaultFunc`,
+  `uniqueColumns: ["source"]`, `export`/`import`) mit den drei Spalten ergänzen;
+  `objectId` für die beiden Pfadspalten.
+- [ ] `mappingsRaw` erhält `onChange` (`alsoDependsOn: ["mappingsTable"]`,
+  `ignoreOwnChanges`), aber **defensiv**: bei `data.mappingsTable === undefined` den
+  gespeicherten String unverändert lassen — eine nie befüllte Tabelle darf die
+  Konfiguration nicht leeren.
+- [ ] `jsonEditor` in dieser Stufe **noch editierbar** lassen (Notausgang, falls
+  `defaultFunc` nicht greift).
+- [ ] Build/Deploy + visuelle Bewertung (User); die sechs offenen Annahmen aus
+  Design-Record §7 beantworten — allen voran: **greift `defaultFunc` bei einem
+  `doNotSave`-`table`?** Fällt diese Annahme, Rückfall auf Variante β
+  (`sendTo`-Button + `onMessage`, Konvertierung über `parseMappings()`).
+
+### Stufe 2 — Festzurren
+- [ ] `jsonEditor`: `"readOnly": true`.
+- [ ] `validator` auf den beiden Pfadspalten (die Adapter-seitige Härtung steht als
+  eigener, vorangestellter Abschnitt „Robustheit gegen unvollständige Mapping-Einträge").
+- [ ] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
+  `dependencies: [{"js-controller": ">=6.0.11"}]` (Konvention an modbus/hm-rpc geprüft:
+  admin gehört in `globalDependencies`).
+- [ ] Version-Bump + News-Eintrag (en/de); `npm run build` und `build/` mitcommitten.
+- [ ] README (Abschnitt „Mapping tab", Import/Export) und CLAUDE.md (Abschnitt
+  „Admin UI" um `doNotSave`/`defaultFunc`/`calculateFunc`/`readOnly` ergänzen)
+  aktualisieren.
+
+### Stufe 3 — später
+- [ ] **Round-Trip nicht dargestellter Felder erneut bewerten.** Datenverlust bei
+  `_comment`, `forwardOnAck`, `forwardChangesOnly`, `propagateAck`, `enabled` ist
+  vorerst **bewusst in Kauf genommen** (Entscheidung 2026-09-26); erst am laufenden
+  System lernen, ob die Tabellen-Komponente unbekannte Keys einer Zeile erhält oder
+  sie beim Edit neu generiert. Danach entscheiden: versteckte Spalten, Konvertierung
+  im Adapter (Variante β) oder eigene Komponente. Die repo-eigene `mappings.json`
+  enthält `_comment`-Felder, der Fall ist also real.
+- [ ] Weitere Spalten (Filter-Flags pro Eintrag, später `transform`/`transformReverse`).
+- [ ] Eingebauten CSV-`export`/`import` der Tabelle bewerten — deckt womöglich den
+  früheren TSV-Wunsch vollständig ab, dann entfällt der Eigenbau.
+- [ ] Bei unbefriedigender Ergonomie: eigene React-Komponente (`type: "custom"`,
+  Vite-Build, Bundle committet — der Server baut nicht). Damit entfiele die
+  String/Array-Brücke vollständig.
 
 ## Initiale Synchronisation / Baseline-Transfer (Beschluss 2026-07-17)
 
@@ -323,9 +398,14 @@ läuft auf dem Vollsystem wie gewollt; jsonConfig-Admin-Validierung vollständig
 (`def`→`default`, `i18n` ergänzt). Weitere Hintergrund-Tests laufen beim User.
 
 **Offen / als Nächstes:**
+- **Aktuelles Thema: Admin-UI-Tabellen-Editor** (Beschluss 2026-09-26), Stufe 1.
+  Verfahren: Build und visuelle Bewertung beim User (Admin V7.8.23); Erprobung ggf. in
+  einer weiteren, noch nicht produktiv genutzten ioBroker-Instanz mit eigens angelegten
+  Test-Datenpunkten.
 - Rückmeldung aus den laufenden Hintergrund-Tests abwarten.
 - **Feature B (JSONata-Transformation)** ist geplant und die Pipeline-Naht steht — Umsetzung
-  erst auf Zuruf.
+  erst auf Zuruf. (Anmerkung 2026-09-26: der User hält Konvertierungen auch per ioBroker-Alias
+  für abgedeckt — Priorität entsprechend niedrig.)
 - (Früher, ggf. bereits erledigt:) Härtungs-Tests Aufgabe 5 Fälle a–f.
 
 Vorheriger Stand: PoC abgeschlossen, Adapter im dev-server verifiziert.

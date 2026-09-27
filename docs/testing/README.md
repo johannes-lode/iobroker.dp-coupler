@@ -17,3 +17,8 @@ are created separately.
   and its direct interactions (filter bypass, `enabled`, coercion,
   `propagateAck`, cycle guard, periodic-only mode). Design record:
   [`../design/initial-synchronization-baseline.md`](../design/initial-synchronization-baseline.md).
+- [malformed-mapping-entries.testspec.md](malformed-mapping-entries.testspec.md)
+  — robustness against incomplete mapping entries: a malformed entry may only be
+  dropped with a logged reason, never disturb the other entries or the adapter
+  start. Design context:
+  [`../design/admin-ui-mapping-table.md`](../design/admin-ui-mapping-table.md) §8.

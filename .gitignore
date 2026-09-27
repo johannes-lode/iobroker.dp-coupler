@@ -15,3 +15,5 @@
 /ccode.mounts
 /ccodevars.env
 /dev-server.log
+
+.codebase-memory-cache

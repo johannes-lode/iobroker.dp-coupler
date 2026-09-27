@@ -78,11 +78,64 @@ const CONFIG_VERSION = 2;
 // ---------------------------------------------------------------------------
 // Type guard
 // ---------------------------------------------------------------------------
+/**
+ * Minimal plausibility check for a state ID used in a mapping entry. Deliberately
+ * NOT a full ioBroker ID validation: it rejects only the forms that would produce
+ * an invalid object ID downstream — empty, inner whitespace, leading/trailing dot,
+ * double dot. Those are exactly what an unfilled or mistyped editor row produces.
+ * Callers trim first, so surrounding whitespace from copy&paste is tolerated.
+ */
+function isPlausibleStateId(value) {
+    if (value === "")
+        return false;
+    if (/\s/.test(value))
+        return false;
+    if (value.startsWith(".") || value.endsWith("."))
+        return false;
+    return !value.includes("..");
+}
 function isMappingEntry(value) {
     if (typeof value !== "object" || value === null)
         return false;
     const obj = value;
-    return typeof obj["source"] === "string" && typeof obj["target"] === "string";
+    if (typeof obj["source"] !== "string" || typeof obj["target"] !== "string")
+        return false;
+    return isPlausibleStateId(obj["source"].trim()) && isPlausibleStateId(obj["target"].trim());
+}
+/**
+ * Normalizes an optional boolean flag of a mapping entry. Tolerates the string and
+ * number spellings a CSV import or a hand-written mapping produces. Returns
+ * `undefined` when the flag is absent (adapter default applies) and `null` when a
+ * present value cannot be interpreted — the caller then drops it with a warning.
+ *
+ * Why this matters: `bidirectional` is tested with `=== true`, so a string "true"
+ * would silently read as false, while the other flags go through truthy `??` tests,
+ * where a string "no" would silently read as true. Both mean the opposite of what
+ * was configured, without any trace in the log.
+ */
+function normalizeFlag(value) {
+    if (value === undefined || value === null)
+        return undefined;
+    if (typeof value === "boolean")
+        return value;
+    if (typeof value === "number") {
+        if (value === 0)
+            return false;
+        if (value === 1)
+            return true;
+        return null;
+    }
+    if (typeof value === "string") {
+        const s = value.trim().toLowerCase();
+        if (s === "")
+            return undefined;
+        if (s === "true" || s === "1" || s === "yes" || s === "on")
+            return true;
+        if (s === "false" || s === "0" || s === "no" || s === "off")
+            return false;
+        return null;
+    }
+    return null;
 }
 // ---------------------------------------------------------------------------
 // Helpers
@@ -151,10 +204,12 @@ class DpCoupler extends utils.Adapter {
         // (deleted) after a successful DB write so emptying the config later cannot
         // resurrect them. The "config empty" condition is the primary re-seed guard.
         let seeded = false;
+        let seededRaw = "";
         if (mappings.length === 0) {
-            const seedEntries = this.readSeedMappings();
-            if (seedEntries !== null) {
-                mappings = seedEntries;
+            const seed = this.readSeedMappings();
+            if (seed !== null) {
+                mappings = seed.entries;
+                seededRaw = seed.canonical;
                 seeded = true;
             }
         }
@@ -167,9 +222,19 @@ class DpCoupler extends utils.Adapter {
         // We do NOT return afterwards — the loader is tolerant and relays immediately
         // from the in-memory mappings even if the restart does not occur.
         const needsNativeMigration = (this.config.configVersion ?? 0) < CONFIG_VERSION;
-        const canonicalRaw = (typeof this.config.mappingsRaw === "string" && !seeded)
-            ? this.config.mappingsRaw
-            : JSON.stringify(mappings, null, 2);
+        // The canonical string is never pruned: it keeps every entry the operator wrote,
+        // including the ones the loader rejected. A rejected entry stays visible (and
+        // fixable) in the admin editor instead of quietly vanishing from the config.
+        let canonicalRaw;
+        if (seeded) {
+            canonicalRaw = seededRaw;
+        }
+        else if (typeof this.config.mappingsRaw === "string") {
+            canonicalRaw = this.config.mappingsRaw;
+        }
+        else {
+            canonicalRaw = JSON.stringify(this.config.mappingsRaw ?? [], null, 2);
+        }
         const patch = {};
         if (needsNativeMigration) {
             const cfg = this.config;
@@ -219,70 +284,95 @@ class DpCoupler extends utils.Adapter {
             }
         }
         // Build per-channel objects (channels.<id>.enabled + .lastValue) for all active entries.
+        //
+        // Per-entry error isolation (defense in depth): the validation above rejects the
+        // malformed entries we know about, but an unexpected failure here must still cost
+        // only the offending entry. Without the try/catch a single rejected await would
+        // abort onReady() — no "ready", no info.connection, no relay at all.
+        const brokenSources = [];
         for (const [sourceId, entry] of this.sourceIndex) {
             const channelId = sourceToChannelId(sourceId);
-            // Determine source datapoint type for the lastValue object definition and,
-            // together with the target type below, for the coercion cache (destType).
-            let sourceType = "mixed";
             try {
-                const srcObj = await this.getForeignObjectAsync(sourceId);
-                if (srcObj && srcObj.type === "state" && srcObj.common.type) {
-                    sourceType = srcObj.common.type;
+                // Determine source datapoint type for the lastValue object definition and,
+                // together with the target type below, for the coercion cache (destType).
+                let sourceType = "mixed";
+                try {
+                    const srcObj = await this.getForeignObjectAsync(sourceId);
+                    if (srcObj && srcObj.type === "state" && srcObj.common.type) {
+                        sourceType = srcObj.common.type;
+                    }
                 }
-            }
-            catch { /* fallback to mixed */ }
-            // Cache declared target/source types for coercion. The reverse direction of a
-            // bidirectional entry writes back to the source, so its type is a destination too.
-            this.destType.set(sourceId, sourceType);
-            try {
-                const tgtObj = await this.getForeignObjectAsync(entry.target);
-                if (tgtObj && tgtObj.type === "state" && tgtObj.common.type) {
-                    this.destType.set(entry.target, tgtObj.common.type);
+                catch { /* fallback to mixed */ }
+                // Cache declared target/source types for coercion. The reverse direction of a
+                // bidirectional entry writes back to the source, so its type is a destination too.
+                this.destType.set(sourceId, sourceType);
+                try {
+                    const tgtObj = await this.getForeignObjectAsync(entry.target);
+                    if (tgtObj && tgtObj.type === "state" && tgtObj.common.type) {
+                        this.destType.set(entry.target, tgtObj.common.type);
+                    }
                 }
+                catch { /* leave unset → coercion passes through */ }
+                await this.setObjectAsync(`channels.${channelId}`, {
+                    type: "channel",
+                    common: { name: sourceId },
+                    native: {},
+                });
+                await this.setObjectAsync(`channels.${channelId}.enabled`, {
+                    type: "state",
+                    common: {
+                        role: "switch.enable",
+                        name: "Channel enabled",
+                        type: "boolean",
+                        read: true,
+                        write: true,
+                        def: true,
+                    },
+                    native: {},
+                });
+                await this.setObjectAsync(`channels.${channelId}.lastValue`, {
+                    type: "state",
+                    common: {
+                        role: "state",
+                        name: "Last relayed value",
+                        type: sourceType,
+                        read: true,
+                        write: false,
+                    },
+                    native: {},
+                });
+                // Seed enabled state only when no value exists yet (first start).
+                const existingEnabled = await this.getStateAsync(`channels.${channelId}.enabled`);
+                let currentEnabled;
+                if (existingEnabled?.val !== null && existingEnabled?.val !== undefined) {
+                    currentEnabled = Boolean(existingEnabled.val);
+                }
+                else {
+                    currentEnabled = typeof entry.enabled === "boolean"
+                        ? entry.enabled
+                        : (this.config.enabledDefault ?? true);
+                    await this.setStateAsync(`channels.${channelId}.enabled`, { val: currentEnabled, ack: true });
+                }
+                this.enabledMap.set(sourceId, currentEnabled);
+                this.enabledDpToSource.set(`${this.namespace}.channels.${channelId}.enabled`, sourceId);
             }
-            catch { /* leave unset → coercion passes through */ }
-            await this.setObjectAsync(`channels.${channelId}`, {
-                type: "channel",
-                common: { name: sourceId },
-                native: {},
-            });
-            await this.setObjectAsync(`channels.${channelId}.enabled`, {
-                type: "state",
-                common: {
-                    role: "switch.enable",
-                    name: "Channel enabled",
-                    type: "boolean",
-                    read: true,
-                    write: true,
-                    def: true,
-                },
-                native: {},
-            });
-            await this.setObjectAsync(`channels.${channelId}.lastValue`, {
-                type: "state",
-                common: {
-                    role: "state",
-                    name: "Last relayed value",
-                    type: sourceType,
-                    read: true,
-                    write: false,
-                },
-                native: {},
-            });
-            // Seed enabled state only when no value exists yet (first start).
-            const existingEnabled = await this.getStateAsync(`channels.${channelId}.enabled`);
-            let currentEnabled;
-            if (existingEnabled?.val !== null && existingEnabled?.val !== undefined) {
-                currentEnabled = Boolean(existingEnabled.val);
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.log.warn(`dp-coupler: could not set up mapping "${sourceId}" → "${entry.target}": ` +
+                    `${message} – entry dropped, all other mappings continue.`);
+                brokenSources.push(sourceId);
             }
-            else {
-                currentEnabled = typeof entry.enabled === "boolean"
-                    ? entry.enabled
-                    : (this.config.enabledDefault ?? true);
-                await this.setStateAsync(`channels.${channelId}.enabled`, { val: currentEnabled, ack: true });
+        }
+        // Drop the failed entries entirely, so no half-initialized coupling stays behind.
+        for (const sourceId of brokenSources) {
+            const entry = this.sourceIndex.get(sourceId);
+            if (entry && this.targetIndex.get(entry.target) === entry) {
+                this.targetIndex.delete(entry.target);
             }
-            this.enabledMap.set(sourceId, currentEnabled);
-            this.enabledDpToSource.set(`${this.namespace}.channels.${channelId}.enabled`, sourceId);
+            this.sourceIndex.delete(sourceId);
+            this.destType.delete(sourceId);
+            this.enabledMap.delete(sourceId);
+            this.enabledDpToSource.delete(`${this.namespace}.channels.${sourceToChannelId(sourceId)}.enabled`);
         }
         // Subscribe to own enabled datapoints so runtime changes update enabledMap.
         await this.subscribeStatesAsync("channels.*.enabled");
@@ -661,14 +751,56 @@ class DpCoupler extends utils.Adapter {
         }
         const valid = [];
         for (let i = 0; i < parsed.length; i++) {
-            if (isMappingEntry(parsed[i])) {
-                valid.push(parsed[i]);
+            const candidate = parsed[i];
+            if (!isMappingEntry(candidate)) {
+                this.log.warn(`dp-coupler: ${label} entry [${i}] has no usable "source"/"target" ` +
+                    `(missing, empty or not a plausible state ID) – skipped.`);
+                continue;
+            }
+            const entry = this.normalizeEntry(candidate, `${label} entry [${i}]`);
+            if (entry !== null)
+                valid.push(entry); // else: reason already logged
+        }
+        return { valid, parsed };
+    }
+    /**
+     * Returns a normalized copy of an already validated entry: trimmed IDs and
+     * tolerant boolean flags. Unknown keys (e.g. "_comment") are preserved.
+     *
+     * Returns null only when the entry is semantically unusable as a coupling
+     * (source === target). An uninterpretable *optional* flag is never fatal — it is
+     * dropped with a warning so the adapter default applies, because discarding a
+     * whole coupling over a cosmetic field would be the larger surprise.
+     */
+    normalizeEntry(entry, label) {
+        const out = {
+            ...entry,
+            source: entry.source.trim(),
+            target: entry.target.trim(),
+        };
+        if (out.source === out.target) {
+            this.log.warn(`dp-coupler: ${label} couples "${out.source}" to itself – skipped.`);
+            return null;
+        }
+        const bag = out;
+        const flags = [
+            "bidirectional", "forwardOnAck", "forwardChangesOnly", "propagateAck", "enabled",
+        ];
+        for (const key of flags) {
+            const normalized = normalizeFlag(bag[key]);
+            if (normalized === null) {
+                this.log.warn(`dp-coupler: ${label} has an uninterpretable "${key}" value ` +
+                    `(${JSON.stringify(bag[key])}) – ignored, adapter default applies.`);
+                delete bag[key];
+            }
+            else if (normalized === undefined) {
+                delete bag[key];
             }
             else {
-                this.log.warn(`dp-coupler: ${label} entry [${i}] is missing "source" or "target" – skipped.`);
+                bag[key] = normalized;
             }
         }
-        return valid;
+        return out;
     }
     /**
      * Loads and validates the mapping configuration from this.config.mappingsRaw
@@ -676,11 +808,13 @@ class DpCoupler extends utils.Adapter {
      * Returns the validated array on success, or null on any unrecoverable error.
      */
     loadMappings() {
-        const valid = this.parseMappings(this.config.mappingsRaw ?? "[]", "mappingsRaw");
-        if (valid !== null) {
-            this.log.info(`dp-coupler: loaded ${valid.length} valid mapping(s).`);
-        }
-        return valid;
+        const result = this.parseMappings(this.config.mappingsRaw ?? "[]", "mappingsRaw");
+        if (result === null)
+            return null;
+        const skipped = result.parsed.length - result.valid.length;
+        this.log.info(`dp-coupler: loaded ${result.valid.length} valid mapping(s)` +
+            (skipped > 0 ? `, ${skipped} skipped (see warnings above)` : ``) + `.`);
+        return result.valid;
     }
     /**
      * Absolute path of the one-shot seed file used for initial deployment.
@@ -691,9 +825,14 @@ class DpCoupler extends utils.Adapter {
     }
     /**
      * Reads and validates the optional one-shot seed file (mappings.seed.json).
-     * Returns the validated entries, or null if the file is absent, empty, or invalid.
-     * Does NOT delete the file — that is done by consumeSeedFile() after a successful
-     * config write, so a failed write leaves the seed in place for the next start.
+     * Returns the validated entries plus the canonical string to store, or null if the
+     * file is absent, empty, or invalid. Does NOT delete the file — that is done by
+     * consumeSeedFile() after a successful config write, so a failed write leaves the
+     * seed in place for the next start.
+     *
+     * `canonical` is built from the *unfiltered* parsed content: rejected entries are
+     * carried into the configuration too, so the operator can see and fix them in the
+     * admin editor instead of losing them silently with the consumed seed file.
      */
     readSeedMappings() {
         const seedPath = this.seedFilePath();
@@ -704,11 +843,14 @@ class DpCoupler extends utils.Adapter {
         catch {
             return null; // No seed file present – nothing to do.
         }
-        const entries = this.parseMappings(content, `seed file "${seedPath}"`);
-        if (entries === null || entries.length === 0)
+        const result = this.parseMappings(content, `seed file "${seedPath}"`);
+        if (result === null || result.valid.length === 0)
             return null;
-        this.log.info(`dp-coupler: seeding ${entries.length} mapping(s) from "${seedPath}".`);
-        return entries;
+        this.log.info(`dp-coupler: seeding ${result.valid.length} mapping(s) from "${seedPath}".`);
+        return {
+            entries: result.valid,
+            canonical: JSON.stringify(result.parsed, null, 2),
+        };
     }
     /**
      * Deletes the consumed seed file (one-shot semantics). Non-fatal on failure:
