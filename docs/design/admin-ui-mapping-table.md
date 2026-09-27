@@ -217,6 +217,28 @@ risk:
 6. ~~Is `objectId` usable inside a table cell?~~ **ANSWERED 2026-09-27 — yes**,
    picker dialog and copy&paste both work, width is fine.
 
+### 7b. Columns cannot be hidden — no simple/expert view (2026-09-27)
+
+Requested: a plain view (source, direction, target, comment) and a full one for
+the optional per-entry flags, switched by a toggle. **Not achievable with the
+`table` type.** Field observation plus source inspection:
+
+- `ConfigTable` filters `schema.items` only through `isHostAllowed` (os/notOs/
+  docker). `expertMode` and `hidden` on a column are evaluated when the **cell**
+  renders, while the header row is built from the unfiltered `items` — so the
+  cells go empty but the column and its heading stay.
+- Two table fields bound to one attribute are impossible: `ConfigPanel` passes
+  `attr: attr` from the item key, so an explicit `attr` in a panel item is ignored.
+- An own view flag (`doNotSave` or a native field) changes nothing about this —
+  it would hide the same cells and leave the same headings.
+
+Taken instead: compact columns. The four flags carry short titles (`On`, `ACK`,
+`Δ only`, `→ACK`) with `tooltip` explanations at 7 % each, so they cost 28 %
+instead of 38 %, and source/target/comment share the rest with no fixed width.
+
+This is the **second** argument for Option 2 (§2), next to §7a. A real two-view
+editor needs an own component.
+
 ### Upstream defect found on the way (2026-09-27)
 
 `uniqueColumns` leaves the dialog stuck in the error state after the offending

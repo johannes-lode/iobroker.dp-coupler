@@ -363,14 +363,23 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   `normalizeFlag("")` liefert „nicht gesetzt", `normalizeEntry()` entfernt den Schlüssel
   — der Default bleibt also wirklich Default. Die Kommentar-Spalte ist nötig, weil
   `_comment` mit dem read-only-JSON-View sonst nur noch per CLI pflegbar wäre.
-- [x] **Zwei Ansichten über den Admin-Experten-Schalter** (2026-09-27): die vier
-  Flag-Spalten tragen `"expertMode": true` und erscheinen nur im Expertenmodus des
-  Admin. Einfache Ansicht = Source / ↔ / Target / Comment. Bewusst **kein** eigener
-  Schalter: ein Hilfsattribut dafür wäre entweder `doNotSave` (und würde die Maske
-  beim Umschalten als geändert markieren, s. §7a) oder ein weiteres native-Feld.
-  Kommentar-Spalte mehrzeilig (`minRows: 2`, `maxRows: 4`); Source/Target/Comment
-  ohne feste Breite, damit sich der Platz in beiden Ansichten automatisch verteilt
-  (im einfachen Modus teilen sie 95 %, im Expertenmodus 57 %).
+- [x] **Zwei Ansichten sind mit `table` nicht erreichbar** (Befund 2026-09-27, im
+  Feld bestätigt und im Quellcode verifiziert): `expertMode`/`hidden` auf einer Spalte
+  leeren nur die Zellen — Spalte und Überschrift bleiben stehen, weil `ConfigTable`
+  die `items` ausschließlich nach Host/OS filtert. Zwei Tabellen-Felder auf **ein**
+  Attribut sind ebenfalls unmöglich (`ConfigPanel` leitet `attr` aus dem Schlüssel ab).
+  Ein eigenes Ansichts-Flag — ob `doNotSave` oder native — hätte genau dasselbe
+  Ergebnis; die Frage nach einer Adapter-Einstellung dafür ist damit erledigt.
+  **Stattdessen kompakte Spalten:** `expertMode` entfernt, Flag-Spalten auf Kürzel
+  (`On`, `ACK`, `Δ only`, `→ACK`) mit `tooltip` und je 7 % — die vier belegen damit
+  28 % statt 38 %. Kommentar-Spalte mehrzeilig (`minRows: 2`, `maxRows: 4`);
+  Source/Target/Comment ohne feste Breite, sie teilen die verbleibenden 67 %.
+- [x] JSON-View **unter** die Tabelle verschoben (Wunsch 2026-09-27). Bewusst ohne
+  `expertMode`, damit der Kopier-/Export-Knopf allen Bedienern zur Verfügung steht.
+- [ ] **Folge für die Wegentscheidung:** zwei Ansichten (einfach/vollständig) bleiben
+  ein offener Wunsch und sind nur mit einer eigenen React-Komponente (§2 Option 2 im
+  Design-Record) erfüllbar. Damit liegen nun **zwei** Argumente dafür vor (das andere
+  ist §7a). Entscheidung offen — erst beurteilen, ob die kompakten Spalten genügen.
 - [x] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
   `dependencies: [{"js-controller": ">=6.0.11"}]` (Konvention an modbus/hm-rpc geprüft:
   admin gehört in `globalDependencies`).

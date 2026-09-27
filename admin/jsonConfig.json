@@ -6,20 +6,6 @@
             "type": "panel",
             "label": "Mapping",
             "items": {
-                "mappingsRaw": {
-                    "type": "text",
-                    "label": "Mappings (JSON view, read-only)",
-                    "readOnly": true,
-                    "copyToClipboard": true,
-                    "minRows": 3,
-                    "maxRows": 12,
-                    "help": "Canonical storage form, read-only — the table below is the editor and its changes are written back here. Use the copy button to export the JSON.",
-                    "onChange": {
-                        "alsoDependsOn": ["mappingsTable"],
-                        "calculateFunc": "return data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2);",
-                        "ignoreOwnChanges": true
-                    }
-                },
                 "info_invalid_json": {
                     "type": "infoBox",
                     "boxType": "error",
@@ -73,11 +59,11 @@
                         {
                             "type": "select",
                             "attr": "enabled",
-                            "title": "Enabled",
-                            "width": "9%",
-                            "expertMode": true,
+                            "title": "On",
+                            "tooltip": "Channel enabled. (def) = adapter default from the Adapter-Settings tab.",
+                            "width": "7%",
                             "options": [
-                                {"label": "(default)", "value": ""},
+                                {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
                                 {"label": "no", "value": false}
                             ]
@@ -85,11 +71,11 @@
                         {
                             "type": "select",
                             "attr": "forwardOnAck",
-                            "title": "On ACK",
-                            "width": "9%",
-                            "expertMode": true,
+                            "title": "ACK",
+                            "tooltip": "Forward on ACK: relay when the source carries ack=true (device confirmations), not only commands. (def) = adapter default.",
+                            "width": "7%",
                             "options": [
-                                {"label": "(default)", "value": ""},
+                                {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
                                 {"label": "no", "value": false}
                             ]
@@ -97,11 +83,11 @@
                         {
                             "type": "select",
                             "attr": "forwardChangesOnly",
-                            "title": "Changes only",
-                            "width": "10%",
-                            "expertMode": true,
+                            "title": "Δ only",
+                            "tooltip": "Forward value changes only: skip re-writes of an unchanged value (e.g. polling refreshes). (def) = adapter default.",
+                            "width": "7%",
                             "options": [
-                                {"label": "(default)", "value": ""},
+                                {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
                                 {"label": "no", "value": false}
                             ]
@@ -109,16 +95,31 @@
                         {
                             "type": "select",
                             "attr": "propagateAck",
-                            "title": "Propagate ACK",
-                            "width": "10%",
-                            "expertMode": true,
+                            "title": "→ACK",
+                            "tooltip": "Propagate the ACK flag: write the target with the source's ack instead of ack=false (command semantics). (def) = adapter default.",
+                            "width": "7%",
                             "options": [
-                                {"label": "(default)", "value": ""},
+                                {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
                                 {"label": "no", "value": false}
                             ]
                         }
                     ]
+                },
+                "mappingsRaw": {
+                    "type": "text",
+                    "label": "Mappings (JSON view, read-only)",
+                    "readOnly": true,
+                    "copyToClipboard": true,
+                    "minRows": 3,
+                    "maxRows": 12,
+                    "newLine": true,
+                    "help": "Canonical storage form, read-only — the table above is the editor and its changes are written back here. Use the copy button to export the JSON.",
+                    "onChange": {
+                        "alsoDependsOn": ["mappingsTable"],
+                        "calculateFunc": "return data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2);",
+                        "ignoreOwnChanges": true
+                    }
                 }
             }
         },
