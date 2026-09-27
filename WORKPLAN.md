@@ -298,21 +298,50 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
 
 ### Stufe 1 — Verifikation (risikoarm)
 - [ ] `admin/jsonConfig.json`: `mappingsTable` (`table`, `doNotSave`, `defaultFunc`,
-  `uniqueColumns: ["source"]`, `export`/`import`) mit den drei Spalten ergänzen;
-  `objectId` für die beiden Pfadspalten.
+  `uniqueColumns: ["source"]`, **nur `export`**) mit den drei Spalten ergänzen;
+  `objectId` für die beiden Pfadspalten. Labels englisch wie der Rest der Datei;
+  `sort`/`filter` auf den Spalten aus (Sortieren würde die vom Bediener gewählte
+  Reihenfolge im gespeicherten Array anfassen).
 - [ ] `mappingsRaw` erhält `onChange` (`alsoDependsOn: ["mappingsTable"]`,
   `ignoreOwnChanges`), aber **defensiv**: bei `data.mappingsTable === undefined` den
   gespeicherten String unverändert lassen — eine nie befüllte Tabelle darf die
   Konfiguration nicht leeren.
 - [ ] `jsonEditor` in dieser Stufe **noch editierbar** lassen (Notausgang, falls
   `defaultFunc` nicht greift).
-- [ ] Build/Deploy + visuelle Bewertung (User); die sechs offenen Annahmen aus
-  Design-Record §7 beantworten — allen voran: **greift `defaultFunc` bei einem
-  `doNotSave`-`table`?** Fällt diese Annahme, Rückfall auf Variante β
-  (`sendTo`-Button + `onMessage`, Konvertierung über `parseMappings()`).
+- [ ] **Keine Sperre bei unparsbarem `mappingsRaw`, aber eine Anzeige** (Entscheidung
+  2026-09-27): wer per CLI einen JSON-String einfügt, trägt die Verantwortung; im GUI
+  wird der Fehler als `infoBox` (`boxType: "error"`) gemeldet und darf zum Verlust
+  führen, sobald die Tabelle zur Eingabe benutzt wird. Dazu liefert `defaultFunc` bei
+  unparsbarem Inhalt bewusst **`undefined`** statt `[]` — sonst hätte allein das Öffnen
+  des Dialogs den defekten String durch `"[]"` ersetzt (Verlust ohne Tabellenbenutzung)
+  und die Fehlerbox wäre sofort wieder verschwunden.
+- [x] Build/Deploy + visuelle Bewertung (User); die offenen Annahmen aus
+  Design-Record §7 beantworten. **Stand 2026-09-27:** `defaultFunc` greift beim
+  `doNotSave`-`table` (Fundament trägt), die Tabelle **patcht** Zeilen (`_comment`
+  überlebt), `doNotSave` hält das Attribut aus `native` heraus, die Datei besteht
+  das offizielle AJV-Schema. Korrigiert: JS-Attribute brauchen ein **explizites
+  äußeres `return`** (kein IIFE) — siehe CLAUDE.md.
+- [x] **Maske galt nach jedem Öffnen als „modifiziert"** — strukturelle Folge des
+  Hilfsattributs (`changed` ist ein Volltextvergleich `data` gegen `originalData`;
+  ein `doNotSave`-Attribut fehlt dort immer). **Entscheidung 2026-09-27: Option (b)**
+  — der Adapter pflegt `native.mappingsTable` als Spiegel des kanonischen Strings,
+  `doNotSave` entfällt. Kein `CONFIG_VERSION`-Bump (der Spiegel gehört nicht in
+  `NATIVE_DEFAULTS`). Abwägung und Grenzen in Design-Record §7a.
+- [x] Restliche Beobachtungen (2026-09-27, alle bestanden): `select`-Spalte
+  speichert **echte Booleans**; `objectId`-Zellen bedienbar inkl. Copy+Paste;
+  `uniqueColumns` greift; Zeilen anlegen/löschen/verschieben und Reihenfolge im
+  JSON korrekt; CSV-Export brauchbar; **Leerzeile bei laufendem Adapter
+  unkritisch** (die Härtung trägt im Feld). Nebenbefund: `uniqueColumns` lässt den
+  Dialog nach dem **Löschen** der doppelten Zeile im Fehlerzustand hängen —
+  Upstream-Defekt in `@iobroker/json-config` (`onDelete` ruft
+  `validateUniqueProps()` nicht), Workaround: eine Zelle antippen. Details im
+  Design-Record.
+- [ ] Verschoben (User): defektes JSON per CLI setzen → Fehlerbox erscheint,
+  Tabelle bleibt leer, String bleibt bei Öffnen/Schließen unverändert.
 
 ### Stufe 2 — Festzurren
 - [ ] `jsonEditor`: `"readOnly": true`.
+- [ ] `"debug": true` aus den drei Feldern entfernen (nur Erprobungshilfe).
 - [ ] `validator` auf den beiden Pfadspalten (die Adapter-seitige Härtung steht als
   eigener, vorangestellter Abschnitt „Robustheit gegen unvollständige Mapping-Einträge").
 - [ ] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
@@ -332,8 +361,17 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   im Adapter (Variante β) oder eigene Komponente. Die repo-eigene `mappings.json`
   enthält `_comment`-Felder, der Fall ist also real.
 - [ ] Weitere Spalten (Filter-Flags pro Eintrag, später `transform`/`transformReverse`).
-- [ ] Eingebauten CSV-`export`/`import` der Tabelle bewerten — deckt womöglich den
-  früheren TSV-Wunsch vollständig ab, dann entfällt der Eigenbau.
+- [ ] **CSV-`import` der Tabelle aktivieren** — bewusst *nach* Stufe 1 und als eigener
+  Arbeitsschritt, damit er separat erprobt werden kann (Entscheidung 2026-09-27):
+  ein Import ersetzt/ergänzt Zeilen und wäre neben dem noch unverstandenen
+  Tabellenverhalten ein zweiter Unsicherheitsfaktor in derselben Erprobung. Dabei
+  bewerten, ob der eingebaute CSV-Weg den früheren TSV-Wunsch vollständig abdeckt —
+  dann entfällt der Eigenbau. (`export` ist bereits ab Stufe 1 aktiv.)
+- [ ] **Reparaturweg für ein defektes `mappingsRaw`** (Entscheidung 2026-09-27):
+  eine Möglichkeit, den defekten JSON-String aus dem Dialog heraus zu löschen — z. B.
+  als Exit-Option beim Verlassen oder als Haken „defekte Definition löschen". Anlass:
+  ist der gespeicherte String nicht parsebar, bleibt die Tabelle leer; spätestens mit
+  `readOnly` (Stufe 2) gibt es dann im UI keinen Weg mehr zurück, nur noch das CLI.
 - [ ] Bei unbefriedigender Ergonomie: eigene React-Komponente (`type: "custom"`,
   Vite-Build, Bundle committet — der Server baut nicht). Damit entfiele die
   String/Array-Brücke vollständig.

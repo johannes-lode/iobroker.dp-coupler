@@ -2,6 +2,7 @@ declare global {
     namespace ioBroker {
         interface AdapterConfig {
             mappingsRaw: string | unknown[];
+            mappingsTable?: unknown[];
             forwardOnAckDefault: boolean;
             forwardChangesOnlyDefault: boolean;
             propagateAckDefault: boolean;

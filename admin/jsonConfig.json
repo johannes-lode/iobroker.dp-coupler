@@ -31,7 +31,6 @@
                     "type": "table",
                     "label": "Couplings",
                     "newLine": true,
-                    "doNotSave": true,
                     "uniqueColumns": ["source"],
                     "showFirstAddOnTop": true,
                     "export": true,

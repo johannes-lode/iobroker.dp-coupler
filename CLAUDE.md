@@ -91,6 +91,8 @@ an old one when a decision is superseded.
 
 **Self-heal / normalization (one write in `onReady()`):** a single `extendForeignObjectAsync("system.adapter.${namespace}", { native: patch })` call combines three concerns (≤ one config restart): (a) `configVersion < 1` → fill missing `NATIVE_DEFAULTS` so the admin UI shows real values, set `configVersion: 1`; (b) native-array `mappingsRaw` → canonical pretty-printed string; (c) seeded mappings → persisted. No early `return` — the tolerant loader relays from the in-memory array even if no restart occurs.
 
+**`mappingsTable` — adapter-maintained mirror (admin UI only).** The jsonConfig table binds to an *array* attribute while the canonical form is a *string*. The adapter therefore mirrors the canonical string as an array into `native.mappingsTable`, as part of the same normalization patch. Runtime never reads it — `mappingsRaw` remains the single source of truth. Its purpose is the dialog's "changed" flag: `JsonConfigComponent` computes it as `JSON.stringify(data) !== originalData`, and a table attribute that exists only in the dialog (`doNotSave`) is always absent from `originalData`, so every opening of the configuration would report unsaved modifications. Written only on divergence (no extra config restart on a UI save) and mirroring the *unfiltered* content. Deliberately **not** declared in the io-package `native` defaults: a default of `[]` would suppress the jsonConfig `defaultFunc` fallback, so a fresh instance configured via CLI would show an empty table until the adapter had run once. Rationale and the alternatives weighed: `docs/design/admin-ui-mapping-table.md` §7a.
+
 **The canonical string is never pruned.** `canonicalRaw` is built from the *unfiltered* input (the stored string as-is, the raw native array, or the raw seed content) — never from the validated list. A rejected entry therefore stays in the configuration and remains visible and fixable in the admin editor, rather than vanishing silently; in the seed case it would otherwise be unrecoverable, because the seed file is consumed.
 
 Mass deployment: `iobroker object set system.adapter.dp-coupler.0 native.mappingsRaw="$(jq -Rs . mappings.json)"` (canonical) or `"$(cat mappings.json)"` (native array, self-healed), or paste JSON into the admin UI. See README "Mass deployment" for import/export/seeding.
@@ -171,6 +173,16 @@ Completion has three triggers: (1) the startup `runBaselinePass()` for sources a
 **Critical:** the jsonConfig attribute for a field's default value is `"default"`, NOT `"def"` (`def` is the state-object `common` key, a different schema). Most field types silently ignore an unknown `def` (defaults then never apply from the UI — they come from `io-package.json` `native` + the configVersion self-heal instead), but `"slider"` enforces `additionalProperties: false` and hard-fails admin validation on `def`. Use `default` for every jsonConfig field.
 
 **Critical:** the newer admin jsonConfig schema **requires** a root-level `"i18n"` property to be explicitly present (`required` in an `if/then` branch — omitting it fails validation even though semantically `false` == omitted). This project uses literal (untranslated) labels and has no `admin/i18n/` folder, so the root declares `"i18n": false`. Set it to `true` only if translation files are added under `admin/i18n/<lang>/translations.json`. Note: the admin schema reports `if/then` errors one blocker at a time — after fixing one root/field violation, re-validate, as the next may surface (this is how the `def` fix revealed the missing `i18n`).
+
+**Critical:** JS-function attributes (`hidden`, `disabled`, `validator`, `defaultFunc`, `onChange.calculateFunc`, `confirm.condition`) must use an **explicit outer `return`** — never an IIFE. `ConfigGeneric.execute()` decides with the crude heuristic `fun.includes('return') ? fun : ´return ${fun}´`: a plain expression is wrapped, but an expression that merely *contains* the word `return` (e.g. inside an IIFE) is used as the function **body**. An IIFE then executes and its result is discarded — the attribute silently evaluates to `undefined`. Symptom: `hidden` always false (element always visible), `defaultFunc` never applies. Write `try { … return x; } catch (e) { return y; }` instead.
+
+**Diagnosis:** any field accepts `"debug": true` — `ConfigGeneric.debugLog()` then logs function text, result and the current `data` to the browser console (`[jsonConfig]` prefix) for every evaluation. The fastest way to see what a JS attribute actually returns. Remove it once a field is understood.
+
+**Validation before deployment:** the official AJV schema is at
+`https://raw.githubusercontent.com/ioBroker/ioBroker.admin/master/packages/jsonConfig/schemas/jsonConfig.json`
+and can be run against `admin/jsonConfig.json` locally with `ajv` — considerably cheaper than discovering a violation through the admin's one-blocker-at-a-time reporting.
+
+`doNotSave: true` is honoured at save time (`JsonConfig.js`: such attributes are kept in the dialog's state but excluded from the `native` written to the DB), so a helper attribute does not pollute the instance config.
 
 ### Debug trace
 

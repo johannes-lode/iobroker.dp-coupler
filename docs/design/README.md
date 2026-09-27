@@ -18,3 +18,6 @@ that supersedes it and cross-link the two.
   one-shot baseline (level-triggered) state transfer at adapter start, so
   datapoints that rarely or never change reach their target at least once per
   adapter lifetime.
+- [admin-ui-mapping-table.md](admin-ui-mapping-table.md) — row-wise table editor
+  for the mapping entries in the admin UI, and how a table bound to an array is
+  reconciled with the canonical string storage of `mappingsRaw`.

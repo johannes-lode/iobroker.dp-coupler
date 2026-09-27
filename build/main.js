@@ -247,6 +247,23 @@ class DpCoupler extends utils.Adapter {
         if (seeded || Array.isArray(this.config.mappingsRaw)) {
             patch.mappingsRaw = canonicalRaw;
         }
+        // Mirror the canonical string as an array into mappingsTable. The admin UI's
+        // table binds to an array attribute, while the canonical form is a string —
+        // and a *stored* mirror is what keeps the dialog's "changed" flag honest: a
+        // table attribute that exists only in the dialog (doNotSave) is always absent
+        // from the comparison baseline, so every opening of the configuration would
+        // report unsaved modifications. See docs/design/admin-ui-mapping-table.md §7a.
+        // Written only on divergence, so a UI save (which writes both consistently)
+        // causes no extra config restart. Mirrors the *unfiltered* content, so a
+        // rejected entry stays visible and fixable in the table too.
+        try {
+            const mirror = JSON.parse(canonicalRaw);
+            if (Array.isArray(mirror) &&
+                JSON.stringify(this.config.mappingsTable) !== JSON.stringify(mirror)) {
+                patch.mappingsTable = mirror;
+            }
+        }
+        catch { /* unparsable canonical string – leave the stored mirror untouched */ }
         if (Object.keys(patch).length > 0) {
             this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, { native: patch })
                 .then(() => {
