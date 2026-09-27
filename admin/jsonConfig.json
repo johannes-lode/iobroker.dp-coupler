@@ -59,9 +59,9 @@
                         {
                             "type": "select",
                             "attr": "enabled",
-                            "title": "On",
+                            "title": "Enabled",
                             "tooltip": "Channel enabled. (def) = adapter default from the Adapter-Settings tab.",
-                            "width": "7%",
+                            "width": "8%",
                             "options": [
                                 {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -71,9 +71,9 @@
                         {
                             "type": "select",
                             "attr": "forwardOnAck",
-                            "title": "ACK",
+                            "title": "on ACK",
                             "tooltip": "Forward on ACK: relay when the source carries ack=true (device confirmations), not only commands. (def) = adapter default.",
-                            "width": "7%",
+                            "width": "8%",
                             "options": [
                                 {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -83,9 +83,9 @@
                         {
                             "type": "select",
                             "attr": "forwardChangesOnly",
-                            "title": "Δ only",
+                            "title": "on change",
                             "tooltip": "Forward value changes only: skip re-writes of an unchanged value (e.g. polling refreshes). (def) = adapter default.",
-                            "width": "7%",
+                            "width": "9%",
                             "options": [
                                 {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -95,9 +95,9 @@
                         {
                             "type": "select",
                             "attr": "propagateAck",
-                            "title": "→ACK",
+                            "title": "pass ACK",
                             "tooltip": "Propagate the ACK flag: write the target with the source's ack instead of ack=false (command semantics). (def) = adapter default.",
-                            "width": "7%",
+                            "width": "9%",
                             "options": [
                                 {"label": "(def)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -105,6 +105,12 @@
                             ]
                         }
                     ]
+                },
+                "legend_columns": {
+                    "type": "staticText",
+                    "newLine": true,
+                    "style": { "fontSize": "0.8rem", "opacity": 0.75 },
+                    "text": "Per-entry columns — (def) = use the adapter default from the Adapter-Settings tab · Enabled = channel active · on ACK = relay also when the source carries ack=true · on change = skip re-writes of an unchanged value · pass ACK = write the target with the source's ack flag instead of ack=false"
                 },
                 "mappingsRaw": {
                     "type": "text",

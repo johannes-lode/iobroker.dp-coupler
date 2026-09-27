@@ -376,6 +376,12 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   Source/Target/Comment ohne feste Breite, sie teilen die verbleibenden 67 %.
 - [x] JSON-View **unter** die Tabelle verschoben (Wunsch 2026-09-27). Bewusst ohne
   `expertMode`, damit der Kopier-/Export-Knopf allen Bedienern zur Verfügung steht.
+- [x] **Spaltenköpfe haben keine Tooltips** — nicht nachrüstbar: `renderOneFilter()`
+  rendert den Titel als reinen Text in einem `<span>` (React escaped, kein
+  HTML-Schmuggel) und liest `headCell.tooltip` nicht. Der Spalten-`tooltip` erreicht
+  nur die **Zelle** (natives `title` am Feld-Container). Ersatz: sprechende Titel
+  (`Enabled`, `on ACK`, `on change`, `pass ACK` statt `On`/`ACK`/`Δ only`/`→ACK`) und
+  eine `staticText`-Legende zwischen Tabelle und JSON-View.
 - [ ] **Folge für die Wegentscheidung:** zwei Ansichten (einfach/vollständig) bleiben
   ein offener Wunsch und sind nur mit einer eigenen React-Komponente (§2 Option 2 im
   Design-Record) erfüllbar. Damit liegen nun **zwei** Argumente dafür vor (das andere
