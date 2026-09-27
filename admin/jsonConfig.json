@@ -7,10 +7,13 @@
             "label": "Mapping",
             "items": {
                 "mappingsRaw": {
-                    "type": "jsonEditor",
-                    "label": "Mappings (JSON view)",
+                    "type": "text",
+                    "label": "Mappings (JSON view, read-only)",
                     "readOnly": true,
-                    "help": "Canonical storage form, read-only. The table below is the editor; its changes are written back here. Open to inspect or copy the JSON.",
+                    "copyToClipboard": true,
+                    "minRows": 3,
+                    "maxRows": 12,
+                    "help": "Canonical storage form, read-only — the table below is the editor and its changes are written back here. Use the copy button to export the JSON.",
                     "onChange": {
                         "alsoDependsOn": ["mappingsTable"],
                         "calculateFunc": "return data.mappingsTable === undefined ? data.mappingsRaw : JSON.stringify(data.mappingsTable, null, 2);",
@@ -40,7 +43,6 @@
                             "type": "objectId",
                             "attr": "source",
                             "title": "Source",
-                            "width": "22%",
                             "validator": "const v = (data.source || '').trim(); return v !== '' && !/\\s/.test(v) && !v.startsWith('.') && !v.endsWith('.') && !v.includes('..');",
                             "validatorErrorText": "Required: a state ID without blanks, without a leading/trailing dot and without '..'"
                         },
@@ -58,7 +60,6 @@
                             "type": "objectId",
                             "attr": "target",
                             "title": "Target",
-                            "width": "22%",
                             "validator": "const v = (data.target || '').trim(); return v !== '' && !/\\s/.test(v) && !v.startsWith('.') && !v.endsWith('.') && !v.includes('..');",
                             "validatorErrorText": "Required: a state ID without blanks, without a leading/trailing dot and without '..'"
                         },
@@ -66,13 +67,15 @@
                             "type": "text",
                             "attr": "_comment",
                             "title": "Comment",
-                            "width": "13%"
+                            "minRows": 2,
+                            "maxRows": 4
                         },
                         {
                             "type": "select",
                             "attr": "enabled",
                             "title": "Enabled",
                             "width": "9%",
+                            "expertMode": true,
                             "options": [
                                 {"label": "(default)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -84,6 +87,7 @@
                             "attr": "forwardOnAck",
                             "title": "On ACK",
                             "width": "9%",
+                            "expertMode": true,
                             "options": [
                                 {"label": "(default)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -95,6 +99,7 @@
                             "attr": "forwardChangesOnly",
                             "title": "Changes only",
                             "width": "10%",
+                            "expertMode": true,
                             "options": [
                                 {"label": "(default)", "value": ""},
                                 {"label": "yes", "value": true},
@@ -106,6 +111,7 @@
                             "attr": "propagateAck",
                             "title": "Propagate ACK",
                             "width": "10%",
+                            "expertMode": true,
                             "options": [
                                 {"label": "(default)", "value": ""},
                                 {"label": "yes", "value": true},

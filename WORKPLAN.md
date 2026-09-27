@@ -341,8 +341,12 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   Tabelle bleibt leer, String bleibt bei Öffnen/Schließen unverändert.
 
 ### Stufe 2 — Festzurren
-- [x] `jsonEditor`: `"readOnly": true`, Label auf „Mappings (JSON view)" umbenannt
-  (der Knopf heißt damit nicht mehr „Editor", was er nicht mehr ist).
+- [x] JSON-Ansicht read-only. **Nachgeschärft 2026-09-27:** der `jsonEditor`-Knopf
+  trägt den fest verdrahteten Text `jc_JSON editor` (das Feld-`label` benennt nur den
+  Modal-Titel), war also nicht umbenennbar. Deshalb auf `type: "text"` mit `readOnly`,
+  `minRows`/`maxRows` und **`copyToClipboard`** umgestellt: eigenes Label, ohne Klick
+  sichtbar, und der JSON-Export ist damit ein echter Kopierknopf statt „markieren und
+  kopieren".
 - [x] `"debug": true` aus allen Feldern entfernt (nur Erprobungshilfe).
 - [x] `validator` auf den beiden Pfadspalten — **bei jeder Eingabe**
   (Entscheidung 2026-09-27; ein Prüf-Button wäre nur als `sendTo` möglich, bräuchte
@@ -359,6 +363,14 @@ Löst den früheren Feature-Request vom 2026-07-02 ab. Vollständige Optionen-Ab
   `normalizeFlag("")` liefert „nicht gesetzt", `normalizeEntry()` entfernt den Schlüssel
   — der Default bleibt also wirklich Default. Die Kommentar-Spalte ist nötig, weil
   `_comment` mit dem read-only-JSON-View sonst nur noch per CLI pflegbar wäre.
+- [x] **Zwei Ansichten über den Admin-Experten-Schalter** (2026-09-27): die vier
+  Flag-Spalten tragen `"expertMode": true` und erscheinen nur im Expertenmodus des
+  Admin. Einfache Ansicht = Source / ↔ / Target / Comment. Bewusst **kein** eigener
+  Schalter: ein Hilfsattribut dafür wäre entweder `doNotSave` (und würde die Maske
+  beim Umschalten als geändert markieren, s. §7a) oder ein weiteres native-Feld.
+  Kommentar-Spalte mehrzeilig (`minRows: 2`, `maxRows: 4`); Source/Target/Comment
+  ohne feste Breite, damit sich der Platz in beiden Ansichten automatisch verteilt
+  (im einfachen Modus teilen sie 95 %, im Expertenmodus 57 %).
 - [x] `io-package.json`: `globalDependencies: [{"admin": ">=7.8.0"}]` und
   `dependencies: [{"js-controller": ">=6.0.11"}]` (Konvention an modbus/hm-rpc geprüft:
   admin gehört in `globalDependencies`).

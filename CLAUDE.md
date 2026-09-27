@@ -176,6 +176,8 @@ Completion has three triggers: (1) the startup `runBaselinePass()` for sources a
 
 **Critical:** JS-function attributes (`hidden`, `disabled`, `validator`, `defaultFunc`, `onChange.calculateFunc`, `confirm.condition`) must use an **explicit outer `return`** — never an IIFE. `ConfigGeneric.execute()` decides with the crude heuristic `fun.includes('return') ? fun : ´return ${fun}´`: a plain expression is wrapped, but an expression that merely *contains* the word `return` (e.g. inside an IIFE) is used as the function **body**. An IIFE then executes and its result is discarded — the attribute silently evaluates to `undefined`. Symptom: `hidden` always false (element always visible), `defaultFunc` never applies. Write `try { … return x; } catch (e) { return y; }` instead.
 
+**`jsonEditor` cannot be relabelled.** `ConfigJsonEditor` renders a button with the hard-coded `I18n.t('jc_JSON editor')`; the field's `label` only titles the modal. For a read-only JSON view prefer `type: "text"` with `readOnly`, `minRows`/`maxRows` and `copyToClipboard` (the schema allows the copy button only on a disabled or read-only field) — own label, visible without a click, and a real export button instead of select-and-copy.
+
 **Diagnosis:** any field accepts `"debug": true` — `ConfigGeneric.debugLog()` then logs function text, result and the current `data` to the browser console (`[jsonConfig]` prefix) for every evaluation. The fastest way to see what a JS attribute actually returns. Remove it once a field is understood.
 
 **Validation before deployment:** the official AJV schema is at
