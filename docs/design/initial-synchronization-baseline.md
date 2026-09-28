@@ -136,7 +136,7 @@ setpoint / switch command) even when nothing changed.
   compare keeps it safe, so an opt-out is not warranted. An opt-out remains
   purely additive should a real need ever surface.
 
-### Addendum 2026-09-28 — "the sync tick stays unconditional" becomes a choice
+### Addendum 2026-09-28 — "the sync tick stays unconditional" becomes a choice (implemented 0.5.0)
 
 This record settled that the periodic tick writes **unconditionally**, without the
 compare the baseline uses. That decision is not revoked, but it turned out to serve
@@ -149,10 +149,21 @@ only **one of the tick's two purposes**:
   costing battery and latency for nothing.
 
 Both purposes can occur in the same configuration, so an adapter-wide switch would
-sacrifice one of them. Planned therefore as a **per-entry** flag `syncCompare`
-(three-valued like the filters, with a `syncCompareDefault`), letting the tick use the
-existing `baselineWrite()` path. See `WORKPLAN.md`; the mechanism itself already
-exists, only the permission to use it is missing.
+sacrifice one of them. Implemented therefore as a **per-entry** flag `syncCompare`
+(three-valued like the filters, with a `syncCompareDefault`, default **off** so the
+established behaviour is unchanged), letting the tick delegate to the existing
+`baselineWrite(…, force=false, "sync")` path. No new mechanism — only the permission to
+use the one that was already there.
+
+Two properties worth knowing:
+
+- **The load shifts, it does not vanish.** Comparing means one extra read per coupling
+  per tick. For radio devices that is a clear win (a Redis read is cheap, a radio
+  command is not); for local datapoints it is neutral to slightly negative. Another
+  reason for deciding per entry.
+- **The comparison is strict** (`===`, as in the baseline). With floating-point values
+  a representation difference would make it write every time anyway. Harmless at 0.5
+  steps, but it is the place to look if a coupling "always writes" or "never writes".
 
 ### Dimension 4 — Re-enabling a channel (added 2026-07-17)
 

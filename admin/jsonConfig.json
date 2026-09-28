@@ -105,6 +105,18 @@
                         },
                         {
                             "type": "select",
+                            "attr": "syncCompare",
+                            "title": "sync cmp",
+                            "tooltip": "Periodic sync only: compare the target before writing and skip it when the value already matches. Off (the default) writes unconditionally — right for a heartbeat, where the timestamp is the information. On, the tick keeps targets in step without writing every time, which matters for radio devices. No effect when no sync interval is set. (def) = adapter default.",
+                            "width": "9%",
+                            "options": [
+                                {"label": "(def)", "value": "def"},
+                                {"label": "yes", "value": true},
+                                {"label": "no", "value": false}
+                            ]
+                        },
+                        {
+                            "type": "select",
                             "attr": "propagateAck",
                             "title": "pass ACK",
                             "tooltip": "Propagate the ACK flag: write the target with the source's ack instead of ack=false (command semantics). (def) = adapter default.",
@@ -174,6 +186,14 @@
                     "type": "checkbox",
                     "label": "Also relay on change (in addition to periodic sync)",
                     "help": "When periodic sync is active (interval > 0), also relay immediately on source value change. Has no effect when interval is 0 — event-driven relay is always active then.",
+                    "default": false,
+                    "newLine": true,
+                    "disabled": "(!data.syncIntervalValue)"
+                },
+                "syncCompareDefault": {
+                    "type": "checkbox",
+                    "label": "Compare before writing (periodic sync)",
+                    "help": "Default for the 'sync cmp' column. Off: the tick writes every target unconditionally — correct for a heartbeat, where the timestamp is the information. On: the tick reads the target first and skips it when the value already matches, which turns the tick into a convergence mechanism without writing every time (relevant for radio devices: one command per tick each). Can be overridden per mapping entry.",
                     "default": false,
                     "newLine": true,
                     "disabled": "(!data.syncIntervalValue)"

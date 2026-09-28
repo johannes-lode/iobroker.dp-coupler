@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.4.3",
+    "version": "0.5.0",
     "news": {
+      "0.5.0": {
+        "en": "New per-coupling setting 'sync cmp': the periodic sync can compare the target before writing and skip it when the value already matches. Off by default, so existing configurations are unchanged — the unconditional write stays right for a heartbeat, where the timestamp is the information. Switch it on where the tick is meant to keep targets in step; with radio devices this saves a command per tick per target. Per coupling, because both purposes can live in one instance.",
+        "de": "Neue Einstellung pro Kopplung ('sync cmp'): der Zeittakt kann das Ziel vor dem Schreiben vergleichen und überspringen, wenn der Wert bereits übereinstimmt. Standardmäßig aus, bestehende Konfigurationen verhalten sich also unverändert — das unbedingte Schreiben bleibt für einen Heartbeat richtig, wo der Zeitstempel die Information ist. Einschalten, wo der Takt Ziele gleich halten soll; bei Funkgeräten spart das ein Kommando pro Takt und Ziel. Pro Kopplung, weil beide Zwecke in einer Instanz vorkommen können."
+      },
       "0.4.3": {
         "en": "Bidirectional branches of a fan-out are no longer downgraded to unidirectional. They are allowed, and the adapter warns once per affected source at every start: a value written back by one branch does not reach the sibling branches directly — with periodic sync active they are evened out at the next tick. Enables keeping several devices (e.g. the thermostats of a room) in step through a neutral datapoint.",
         "de": "Bidirektionale Zweige einer Sternverteilung werden nicht mehr auf unidirektional zurückgestuft. Sie sind zulässig, und der Adapter warnt bei jedem Start einmal pro betroffener Quelle: ein von einem Zweig zurückgeschriebener Wert erreicht die übrigen Zweige nicht direkt — bei aktivem Zeittakt werden sie beim nächsten Takt ausgeglichen. Damit lassen sich mehrere Geräte (z. B. die Thermostate eines Raums) über einen neutralen Datenpunkt gleich halten."
@@ -69,6 +73,7 @@
     "syncIntervalValue": 0,
     "syncUnit": "ms",
     "relayOnChange": false,
+    "syncCompareDefault": false,
     "enabledDefault": true,
     "coerceTypesDefault": true,
     "coerceStringsDefault": false,

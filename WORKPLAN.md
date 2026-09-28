@@ -517,8 +517,8 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
 
 ### Offen / nachgelagert
 
-- [ ] **`syncCompare` pro Eintrag — compare-then-write für den Zeittakt.**
-  **Vor Phase 2 gezogen** (Entscheidung 2026-09-28). Begründung: der Takt hat *zwei*
+- [x] **`syncCompare` pro Eintrag — compare-then-write für den Zeittakt** (Version
+  0.5.0, umgesetzt 2026-09-28). **Vor Phase 2 gezogen.** Begründung: der Takt hat *zwei*
   Zwecke. Für einen **Heartbeat** ist das unbedingte Schreiben richtig — dort ist der
   Zeitstempel die Information. Für **„halte diese Ziele auf demselben Wert"** ist es
   genau falsch, und bei Funkgeräten (Thermostate!) schädlich: jeder Takt ein
@@ -538,12 +538,18 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
     noch ein Grund für die Entscheidung pro Eintrag. Und `baselineWrite()` vergleicht
     mit `===`: bei Fließkommawerten kann eine Darstellungsdifferenz dazu führen, dass
     doch jedes Mal geschrieben wird.
-  - **Nachtrag im Baseline-Design-Record** nötig: dort steht „Sync-Tick: bleibt
-    unbedingt (kein Vergleich)" als Festlegung. Sie wird nicht aufgehoben, sondern zur
-    Wahl gemacht.
+  - **Nachtrag im Baseline-Design-Record** erledigt: dort stand „Sync-Tick: bleibt
+    unbedingt (kein Vergleich)" als Festlegung. Sie ist nicht aufgehoben, sondern zur
+    Wahl gemacht — inklusive der beiden Eigenschaften (Lastverschiebung, strikter
+    `===`-Vergleich).
   - Nebeneffekt: mit `syncCompare = yes` wird der Takt zu einem brauchbaren
     Konvergenz-Mechanismus für den bidirektionalen Stern — ohne Funklast, nur
     latenzbehaftet.
+  - `CONFIG_VERSION` 2 → 3 (neues `NATIVE_DEFAULTS`-Feld `syncCompareDefault`, damit
+    bestehende Instanzen es in der UI sehen). Default **aus** → bestehende
+    Konfigurationen verhalten sich unverändert.
+  - Testfälle: Gruppe G der Fan-out-Testspezifikation; G1 ist der Regressionswächter
+    für den Heartbeat.
 - [ ] **Phase 2: bidirektionaler Stern** — Rückschreiben eines Satelliten muss die
   übrigen Sternteilnehmer erreichen (`relayFrom(..., exceptTarget)`). **Nach**
   `syncCompare`. Der Vorrang-Gedanke (Tabellen-Reihenfolge + Zeitfenster) ist für den
@@ -552,6 +558,25 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
   Der skizzierte Zwischenschritt „nur die erste bidirektionale Zeile darf
   zurückschreiben" ist damit erledigt: beim Thermostat-Fall muss **jedes** Gerät
   schreiben dürfen.
+- **Wertbasierte Quittungserwartung — Ansatz für einen Spezialfall, kein geplantes
+  Feature** (Feldbefund 2026-09-28; architektonische Entscheidung 2026-09-28: ein
+  Filter für *ein* Fehlverhalten löst genau dieses, der nächste defekte Gerätetyp
+  bringt ein anderes Muster — eine Sammlung gerätespezifischer Notbehelfe gehört nicht
+  in einen allgemeinen Koppler, die Ursache gehört in den Geräte-Adapter). Anlass: Zigbee-Thermostate (über
+  Zigbee2MQTT) bestätigen einen geschriebenen Sollwert **zuerst mit dem alten Wert**
+  (ack:true) und erst danach mit dem neuen. Schritt 2 ist von einer Bedienung am Gerät
+  nicht unterscheidbar — gleicher DP, gleiches `ack`, echte Wertänderung, `lc == ts` —
+  und nährt sich über zwei gekoppelte Geräte selbst. **Der Fehler liegt nicht im
+  Adapter** (Ursache vermutlich Rücklesen nach dem Schreiben in Zigbee2MQTT; wird vom
+  Bediener separat verfolgt).
+  Denkbarer Mechanismus: beim Schreiben den **erwarteten Wert** merken und eine
+  Meldung mit dem *Vorwert* verwerfen, bis die passende Bestätigung eintrifft — keine
+  Zeit-Totzeit, sondern eine Quittungserwartung. Braucht aber einen **Timeout als
+  Ausfallsicherung**: eine Bestätigung, die nie kommt, dürfte den Datenpunkt nicht
+  dauerhaft blockieren. Damit ist die Totzeit nicht vermeidbar, nur anders motiviert —
+  und eine Zustandsmaschine pro Ziel, um ein Upstream-Fehlverhalten zu kaschieren, ist
+  bewusst zurückgestellt. Zwischenlösung (in der README dokumentiert): Kopplungen
+  unidirektional betreiben und den Wert zentral setzen.
 - [ ] **Takt pro Eintrag oder Taktgruppen** (aufgekommen 2026-09-28, nicht geplant):
   `syncInterval` ist adapterweit, verschiedene Kadenzen brauchen daher **verschiedene
   Instanzen** — so löst der Bediener es heute (eine Instanz hält den Modus der

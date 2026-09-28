@@ -110,15 +110,22 @@ undocumented timeout if they are not.
 
 Set a **sync interval**: the periodic sync re-writes every target with the last known
 source value, *whether it changed or not*. That unconditional write is the whole point
-here; the timestamp is the information.
+here; the timestamp is the information. Leave **sync cmp** off for these couplings.
+
+Where the tick serves the *other* purpose — keeping targets in step rather than
+refreshing them — switch **sync cmp** on for those rows: the tick then reads the target
+first and writes only when the value actually differs. Both kinds of coupling can live
+in the same instance, which is why the setting is per entry.
 
 Note that the interval is **adapter-wide**. Different cadences — say a one-minute
 refresh for the temperature and a ten-minute one for the mode — are best solved with
 **separate adapter instances**, each with its own interval and its own couplings. That
 is a normal, supported arrangement, not a workaround.
 
-> **With radio devices, weigh the cost.** Every tick is a radio command per target:
-> battery, airtime, latency. Prefer the longest interval the devices tolerate.
+> **With radio devices, weigh the cost.** Every unconditional tick is a radio command
+> per target: battery, airtime, latency. Prefer the longest interval the devices
+> tolerate — and switch **sync cmp** on wherever a refresh is not actually required,
+> which reduces the traffic to the occasions where something really differs.
 
 ### Keep several devices in step with each other
 
@@ -134,6 +141,67 @@ Any of them may be operated, and all should follow. Couple each device
 See [Mapping tab](#mapping-tab) for the flags this needs and the caveat about devices
 that round differently. The central datapoint has a second benefit: it is the value
 VIS, scripts and logging should use, and it makes adding a device one more row.
+
+But check the devices first — see the next section.
+
+### Before you couple bidirectionally: check what the device reports back
+
+Some devices confirm a written value in a way that makes the reverse direction
+unusable. Observed in the field with Zigbee thermostats (via Zigbee2MQTT):
+
+```
+1. the adapter writes    setpoint = 22   ack:false   ← our command
+2. the device reports    setpoint = 21   ack:true    ← the OLD value
+3. the device reports    setpoint = 22   ack:true    ← the new value, finally
+```
+
+**Step 2 is indistinguishable from someone operating the device.** Same datapoint,
+same `ack`, a genuine value change with `lc == ts`. No filter this adapter has can
+separate the two: `on ACK` must be on (otherwise operating the device never arrives),
+`on change` does not apply (the value really does change), and the cycle guard has
+already spent its entry on step 1.
+
+Worse, **it feeds itself.** The stale value is relayed to the second device, which runs
+through the same sequence and reports *its* stale value back:
+
+```
+T1 reports 21 → T2 := 21 → T2 reports 22 (stale) → T1 := 22 → T1 reports 21 (stale) → …
+```
+
+Every round looks like a legitimate change. A central master datapoint does not help:
+it carries no rubbish of its own, but it passes it on faithfully.
+
+#### Diagnosing it
+
+Watch what the device actually publishes, directly at the MQTT broker:
+
+```bash
+mosquitto_sub -h <broker> -t 'zigbee2mqtt/<device>' -v
+```
+
+If you prefer to stay inside ioBroker, publish the **whole state object** as JSON via
+the MQTT client adapter — `val`, `ack`, `ts` and `lc` together — and send only when the
+payload changes. That makes the individual messages and their `ack` flags visible,
+which a plain value display hides: the two confirmations of step 2 and 3 look identical
+there except for the value.
+
+You are looking for two things: a confirmation carrying the **previous** value after a
+write, and unsolicited repetitions of the setpoint at irregular intervals.
+
+#### What to do about it
+
+- **Run the couplings one-directionally** (master datapoint → devices) and set the
+  value centrally. Everything works except operating the device itself — but it is
+  stable instead of making valves travel.
+- **Look for the cause at the device adapter**, not here. The pattern "old value first,
+  then the new one" suggests a read-back right after the write, where the device
+  answers before it has applied the change. Zigbee2MQTT has per-device settings around
+  optimistic publishing and reading back after `set`.
+- This adapter could only recognize it with a **value-based acknowledgement
+  expectation** — remembering which value is expected and discarding a report of the
+  previous value until the matching confirmation arrives. That needs a timeout as a
+  fallback (a confirmation that never comes must not block the datapoint forever), so
+  it is deliberately not implemented; see the roadmap.
 
 ### Translate events and forward them
 
@@ -176,6 +244,7 @@ The **Mapping** tab holds a row-wise table editor — one row per coupling:
 | **Comment** | free text (stored as `_comment`), multi-line |
 | **Enabled** | startup strategy for this coupling's switch: `yes`/`no` force it at every start, `(def)` forces the adapter default, `(keep)` leaves the runtime datapoint alone — see [Channel datapoints](#channel-datapoints) |
 | **on ACK**, **on change**, **pass ACK** | per-entry filter overrides; `(def)` means "use the adapter default from the Defaults tab" |
+| **sync cmp** | periodic sync only: compare the target before writing and skip it when it already matches. Off (default) writes unconditionally — right for a heartbeat. No effect without a sync interval |
 
 Rows can be added, deleted and reordered; the table exports to CSV. Paths are
 validated as you type: a path must not be empty, must not contain blanks and
@@ -287,6 +356,7 @@ value.
 | Enable channels by default   | on      | Initial value of `channels.<id>.enabled` when the datapoint is first created. Can be overridden per entry via the `enabled` mapping field. |
 | Sync interval                | 0 (off) | Periodically re-write all target datapoints with the last known source value (heartbeat/refresh). Set a value and unit (`ms`/`s`/`min`/`h`); `0` disables the feature. |
 | Relay on change              | off     | Only evaluated when sync interval > 0. `on` = event-driven relay in addition to periodic sync. `off` = periodic only (no relay on state change events). |
+| Compare before writing       | off     | Default for the **sync cmp** column. `off` = the tick writes every target unconditionally (heartbeat: the timestamp is the information). `on` = the tick reads the target first and skips it when the value matches, making it a convergence mechanism without constant writes. Overridable per entry. |
 
 Save the configuration; the adapter restarts and activates the new mappings.
 
@@ -404,6 +474,23 @@ Node.js ≥ 20 required.
 
 ## Changelog
 
+### 0.5.0 — compare before writing, per coupling
+
+The periodic sync has two purposes that want opposite behaviour. A **heartbeat** must
+write even when nothing changed, because the timestamp is the information. **Keeping
+targets in step** wants the opposite — and with radio devices every unnecessary tick
+costs a command, battery and airtime.
+
+New column **sync cmp** (and the matching default in the Adapter-Settings tab): with it
+on, the tick reads the target first and writes only when the value actually differs.
+Off by default, so existing configurations behave exactly as before.
+
+It is a per-entry setting because both kinds of coupling can live in the same instance;
+an adapter-wide switch would have sacrificed one of them. Side effect: with **sync cmp**
+on, the tick becomes a usable convergence mechanism for a
+[bidirectional star](#keep-several-devices-in-step-with-each-other) — delayed by up to
+one interval, but without constant writes.
+
 ### 0.4.3 — bidirectional fan-out allowed
 
 Bidirectional branches of a fan-out were downgraded to unidirectional with a warning.
@@ -481,11 +568,6 @@ Initial proof-of-concept release.
 
 ## Roadmap
 
-- **Compare before writing, per entry** (`syncCompare`) — let the periodic sync skip a
-  target whose value already matches. The tick writes unconditionally today, which is
-  right for a heartbeat and wasteful for "keep these in step", especially with radio
-  devices. Per entry rather than adapter-wide, because both purposes occur in the same
-  configuration
 - **Immediate propagation in a bidirectional star** — let a value written back by one
   branch reach the sibling branches at once instead of at the next tick
   ([design record](docs/design/fan-out-and-coupling-identity.md) §5)
@@ -494,11 +576,22 @@ Initial proof-of-concept release.
 - **Fail counter** — set `info.connection` to `false` after a configurable
   number of consecutive write failures per mapping
 
-**Deliberately not planned: value conversion.** Beyond the type cast, conversions
-belong in **ioBroker aliases** with their read/write formulas — they are per datapoint,
-already exist, and cover rounding, enumerations and scaling. Adding an expression
-language here would duplicate that with less reach. See
-[What it is good for](#what-it-is-good-for).
+### Deliberately not planned
+
+**Value conversion.** Beyond the type cast, conversions belong in **ioBroker aliases**
+with their read/write formulas — they are per datapoint, already exist, and cover
+rounding, enumerations and scaling. An expression language here would duplicate that
+with less reach. See [What it is good for](#what-it-is-good-for).
+
+**Filtering misbehaving device confirmations.** For the device defect described
+[above](#before-you-couple-bidirectionally-check-what-the-device-reports-back), an
+adapter-side remedy is conceivable — remember which value a write expects and discard a
+confirmation of the *previous* value until the matching one arrives, with a timeout as
+a fallback. It is recorded as **an approach for that one case, not as a planned
+option**: such a filter addresses exactly one malformed behaviour, and the next
+misbehaving device type will produce a different pattern. Growing a collection of
+device-specific workarounds inside a general-purpose coupler is the wrong place for
+them; the cause belongs in the device adapter.
 
 ## License
 

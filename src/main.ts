@@ -35,6 +35,7 @@ declare global {
             syncIntervalValue: number; // numeric part of the sync interval; 0 = disabled
             syncUnit: string;          // unit: "ms" | "s" | "min" | "h"
             relayOnChange: boolean;    // when sync active: also relay on event; irrelevant when sync disabled
+            syncCompareDefault: boolean; // periodic sync: compare target before writing (default false = heartbeat)
             enabledDefault: boolean;   // initial enabled state for per-channel datapoints
             coerceTypesDefault: boolean;   // cast source value to target common.type (bool↔number, C convention)
             coerceStringsDefault: boolean; // additionally interpret strings when coercing; else pass through
@@ -55,6 +56,7 @@ interface MappingEntry {
     forwardOnAck?: boolean;
     forwardChangesOnly?: boolean;
     propagateAck?: boolean;
+    syncCompare?: boolean;           // periodic sync: compare the target before writing
     // Startup strategy for the channels.<id>.enabled datapoint — NOT a filter flag:
     // true/false force it, "def" forces the adapter default, "keep" (and a missing
     // field) leaves an existing datapoint alone. See normalizeEnabled().
@@ -77,6 +79,7 @@ const NATIVE_DEFAULTS: Record<string, unknown> = {
     syncIntervalValue:         0,
     syncUnit:                  "ms",
     relayOnChange:             false,
+    syncCompareDefault:        false,
     enabledDefault:            true,
     coerceTypesDefault:        true,
     coerceStringsDefault:      false,
@@ -85,7 +88,7 @@ const NATIVE_DEFAULTS: Record<string, unknown> = {
 // Current native config schema version. onReady() fills any missing NATIVE_DEFAULTS and
 // bumps configVersion to this value whenever the stored version is lower — the forward-
 // compatible migration hook (new native fields become visible in the admin UI on upgrade).
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Type guard
@@ -865,6 +868,18 @@ class DpCoupler extends utils.Adapter {
             if (this.enabledMap.get(entry.id) === false) continue;
             const cached = this.lastState.get(entry.source);
             if (!cached) continue;
+
+            // syncCompare turns the tick from a heartbeat into a convergence mechanism.
+            // Off (the default) it writes unconditionally — that is what a watchdog
+            // target needs, where the timestamp is the information. On, it reuses the
+            // compare-then-write path so a target that already matches is left alone;
+            // for radio devices that is the difference between a command per tick and
+            // none. Per entry, because both purposes occur in the same configuration.
+            if (entry.syncCompare ?? this.config.syncCompareDefault ?? false) {
+                await this.baselineWrite(entry, cached.val, cached.q, cached.ack, false, "sync");
+                continue;
+            }
+
             const dest = entry.target;
             this.inFlight.add(dest);
             try {
@@ -933,6 +948,7 @@ class DpCoupler extends utils.Adapter {
         q: ioBroker.State["q"],
         ack: ioBroker.State["ack"],
         force: boolean,
+        reason = "baseline",
     ): Promise<boolean> {
         const dest   = entry.target;
         const outVal = this.resolveValue(entry, "forward", sourceVal, dest);
@@ -941,7 +957,7 @@ class DpCoupler extends utils.Adapter {
             try {
                 const current = await this.getForeignStateAsync(dest);
                 if (current && current.val === outVal) {
-                    dpcLog(`[dpc]   baseline ${entry.source} → ${dest}: equal (${outVal}) → skip`);
+                    dpcLog(`[dpc]   ${reason} ${entry.source} → ${dest}: equal (${outVal}) → skip`);
                     return false; // already in sync
                 }
             } catch { /* read failed → fall through and write */ }
@@ -955,12 +971,12 @@ class DpCoupler extends utils.Adapter {
                 ack: shouldPropagateAck ? (ack ?? false) : false,
                 q,
             });
-            this.log.debug(`dp-coupler: baseline ${entry.source} → ${dest} = ${outVal}${force ? " (forced)" : ""}`);
+            this.log.debug(`dp-coupler: ${reason} ${entry.source} → ${dest} = ${outVal}${force ? " (forced)" : ""}`);
             return true;
         } catch (err: unknown) {
             this.inFlight.delete(dest);
             const message = err instanceof Error ? err.message : String(err);
-            this.log.warn(`dp-coupler: baseline write to ${dest} failed: ${message}`);
+            this.log.warn(`dp-coupler: ${reason} write to ${dest} failed: ${message}`);
             return false;
         }
     }
@@ -1162,7 +1178,7 @@ class DpCoupler extends utils.Adapter {
         }
 
         const flags = [
-            "bidirectional", "forwardOnAck", "forwardChangesOnly", "propagateAck",
+            "bidirectional", "forwardOnAck", "forwardChangesOnly", "propagateAck", "syncCompare",
         ] as const;
         for (const key of flags) {
             const normalized = normalizeFlag(bag[key]);

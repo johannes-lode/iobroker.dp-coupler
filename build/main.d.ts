@@ -9,6 +9,7 @@ declare global {
             syncIntervalValue: number;
             syncUnit: string;
             relayOnChange: boolean;
+            syncCompareDefault: boolean;
             enabledDefault: boolean;
             coerceTypesDefault: boolean;
             coerceStringsDefault: boolean;

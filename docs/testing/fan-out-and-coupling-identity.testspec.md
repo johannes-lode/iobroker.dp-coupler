@@ -122,6 +122,26 @@ cached value back to T, silently undoing the change made there while S kept the 
 one. F6 guards the flip side: the cycle guard must still clear its entry for every
 incoming id, otherwise the next genuine event is swallowed.
 
+### Group G — `syncCompare` (added 0.5.0)
+
+Per-entry choice between the tick's two purposes. Default **off** = unconditional, the
+behaviour of every earlier version.
+
+| # | Configuration | Stimulus | Expected |
+|---|---|---|---|
+| G1 | `S → T`, sync interval set, `sync cmp` **off**, T already equals S | one tick | **a write happens** — the heartbeat purpose; the timestamp is the point |
+| G2 | as G1 but `sync cmp` **on** | one tick | **no write** to T (O1 must assert absence) |
+| G3 | as G2 but T differs from S | one tick | T is written once |
+| G4 | two couplings on the same source, one `on`, one `off`, both targets equal | one tick | the `off` one is written, the `on` one is not — the setting really is per entry |
+| G5 | `sync cmp` = `(def)`, adapter default `on` | one tick, target equal | no write — the default is honoured |
+| G6 | `sync cmp` **on**, coupling disabled | one tick | no write, no read either (the enabled check comes first) |
+| G7 | `sync cmp` **on**, target read fails | one tick | falls through and **writes** (a failed read must not silence the coupling) |
+| G8 | `sync cmp` **on**, bidirectional star, one branch writes back | one tick after the write-back | the sibling branch is written (convergence), the branch that already matches is not |
+
+G1 is the regression guard for the heartbeat: a well-meant "optimization" that compares
+everywhere would break watchdog targets silently. G8 is the reason the flag was pulled
+ahead of immediate propagation.
+
 ---
 
 ## 4. Coverage matrix
@@ -140,6 +160,9 @@ incoming id, otherwise the next genuine event is swallowed.
 | Sync tick with fan-out | E4 |
 | Cache after a write-back, sync not undoing it | F1, F2, F5 |
 | Cycle guard still clearing its entry | F3, F6 |
+| Heartbeat stays unconditional | G1 |
+| `syncCompare` skips matching targets, per entry | G2–G5 |
+| `syncCompare` edge cases (disabled, read failure, star) | G6–G8 |
 
 ---
 
