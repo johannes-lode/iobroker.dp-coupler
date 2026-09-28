@@ -133,8 +133,11 @@ interface MappingEntry {
     forwardOnAck?: boolean;      // override adapter default; default false — trigger relay on ack=true source
     forwardChangesOnly?: boolean; // override adapter default; default true
     propagateAck?: boolean;      // override adapter default; default false — write target with ack=state.ack
+    enabled?: boolean | "def" | "keep";  // startup strategy for channels.<id>.enabled — not a filter
 }
 ```
+
+**`enabled` is a four-valued startup strategy, not a tri-state filter flag.** Applied in the channel-building loop at **every** start: `true`/`false` force the datapoint, `"def"` forces `enabledDefault`, `"keep"` leaves an existing datapoint untouched (a missing one is always created from `enabledDefault`). A missing field means `"keep"` — the behaviour before this became a table column, so old configurations are unchanged. Normalized by `normalizeEnabled()`, **not** `normalizeFlag()`, which would read `"keep"` as uninterpretable and `"def"` as "not set"; `"old"`/`"hold"`/`"runtime"`/`"retain"` are accepted synonyms of `"keep"`. Why it changed: as a seed value the column only had an effect on first creation, so a row set to `no` did not switch the coupling off and the initial baseline ran for it.
 
 Per-entry fields override adapter-level defaults (`forwardOnAckDefault`, `forwardChangesOnlyDefault`, `propagateAckDefault` in `native` config).
 
@@ -185,7 +188,9 @@ Completion has three triggers: (1) the startup `runBaselinePass()` for sources a
 
 The coupling is deliberately asymmetric (string → table once on open, table → string on every edit), which is what prevents a feedback cycle. Full rationale: `docs/design/admin-ui-mapping-table.md`.
 
-**Three-valued flag columns:** `enabled`/`forwardOnAck`/`forwardChangesOnly`/`propagateAck` are `select`s with `"def"` = "(def)", `true`, `false` — a checkbox could not distinguish "not set" from "off" and would silently override the adapter defaults on every new row. `normalizeFlag("def")` yields "not set" and `normalizeEntry()` drops the key.
+**The `enabled` column has four values** — `"keep"`, `"def"`, `true`, `false` — because it is a startup strategy (see Mapping schema), not a filter. The other three are three-valued.
+
+**Three-valued flag columns:** `forwardOnAck`/`forwardChangesOnly`/`propagateAck` are `select`s with `"def"` = "(def)", `true`, `false` — a checkbox could not distinguish "not set" from "off" and would silently override the adapter defaults on every new row. `normalizeFlag("def")` yields "not set" and `normalizeEntry()` drops the key.
 
 **Critical: never use `""` (or any falsy value) as a `select` option value next to `false`.** `ConfigSelect.renderItem()` matches the stored value against the options with a deliberately loose `==` (`selectOptions.find(it => it.value == value)`), and `"" == false` is `true` in JavaScript — an entry stored as `false` would display the **first** loosely-equal option instead of its own. Observed symptom: selecting "no" stored `false` correctly but the cell immediately showed "(def)". Hence the placeholder is the string `"def"` (`Number("def")` is NaN, so it matches neither boolean). A second, unavoidable effect of the same design: `value: value || '_'` turns a stored `false` into the placeholder, so in the *opened* dropdown no option is highlighted — the closed cell is correct. This is also why the schema only sanctions `number|string` for table column option values.
 

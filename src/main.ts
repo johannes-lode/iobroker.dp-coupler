@@ -55,7 +55,10 @@ interface MappingEntry {
     forwardOnAck?: boolean;
     forwardChangesOnly?: boolean;
     propagateAck?: boolean;
-    enabled?: boolean;               // seed value for the channels.<id>.enabled datapoint
+    // Startup strategy for the channels.<id>.enabled datapoint — NOT a filter flag:
+    // true/false force it, "def" forces the adapter default, "keep" (and a missing
+    // field) leaves an existing datapoint alone. See normalizeEnabled().
+    enabled?: boolean | "def" | "keep";
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +90,40 @@ const CONFIG_VERSION = 2;
 // ---------------------------------------------------------------------------
 // Type guard
 // ---------------------------------------------------------------------------
+
+/**
+ * Normalizes the `enabled` field, which is a four-valued **startup strategy**, not a
+ * tri-state filter flag like the others: `true`/`false` force the datapoint at every
+ * start, `"def"` forces the adapter default, `"keep"` leaves an existing datapoint
+ * untouched (and creates a missing one from the adapter default).
+ *
+ * A missing, null or empty value means `"keep"` — that is exactly the behaviour
+ * before this field became a table column, so existing configurations are unchanged.
+ * `"old"`, `"hold"`, `"runtime"` and `"retain"` are accepted as synonyms of `"keep"`,
+ * so a hand-written or CLI-set configuration is not tripped up by the wording.
+ * Returns null only for a value that cannot be interpreted at all.
+ */
+function normalizeEnabled(value: unknown): boolean | "def" | "keep" | null {
+    if (value === undefined || value === null) return "keep";
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") {
+        if (value === 0) return false;
+        if (value === 1) return true;
+        return null;
+    }
+    if (typeof value === "string") {
+        const s = value.trim().toLowerCase();
+        if (s === "") return "keep";
+        if (s === "def" || s === "default") return "def";
+        if (s === "keep" || s === "old" || s === "hold" || s === "runtime" || s === "retain") {
+            return "keep";
+        }
+        if (s === "true"  || s === "1" || s === "yes" || s === "on")  return true;
+        if (s === "false" || s === "0" || s === "no"  || s === "off") return false;
+        return null;
+    }
+    return null;
+}
 
 /**
  * Minimal plausibility check for a state ID used in a mapping entry. Deliberately
@@ -443,15 +480,29 @@ class DpCoupler extends utils.Adapter {
                     native: {},
                 });
 
-                // Seed enabled state only when no value exists yet (first start).
+                // Apply the entry's startup strategy to the enabled datapoint:
+                //   true/false → forced at every start (runtime changes last until the next)
+                //   "def"      → the adapter default, forced at every start
+                //   "keep"     → an existing datapoint is left alone; a missing one is
+                //                created from the adapter default
+                // "keep" is what a missing field means, so pre-existing configurations
+                // keep behaving as before. A table cell set to no therefore really means
+                // off — before this, the column only had an effect on first creation,
+                // which was the surprise it was fixed for.
                 const existingEnabled = await this.getStateAsync(`channels.${channelId}.enabled`);
+                const hasValue  = existingEnabled?.val !== null && existingEnabled?.val !== undefined;
+                const strategy  = entry.enabled ?? "keep";
+                const adapterDefault = this.config.enabledDefault ?? true;
+
                 let currentEnabled: boolean;
-                if (existingEnabled?.val !== null && existingEnabled?.val !== undefined) {
-                    currentEnabled = Boolean(existingEnabled.val);
+                if (strategy === "keep") {
+                    currentEnabled = hasValue ? Boolean(existingEnabled?.val) : adapterDefault;
+                } else if (strategy === "def") {
+                    currentEnabled = adapterDefault;
                 } else {
-                    currentEnabled = typeof entry.enabled === "boolean"
-                        ? entry.enabled
-                        : (this.config.enabledDefault ?? true);
+                    currentEnabled = strategy;
+                }
+                if (!hasValue || Boolean(existingEnabled?.val) !== currentEnabled) {
                     await this.setStateAsync(`channels.${channelId}.enabled`, { val: currentEnabled, ack: true });
                 }
                 this.enabledMap.set(entry.id, currentEnabled);
@@ -1056,9 +1107,24 @@ class DpCoupler extends utils.Adapter {
             return null;
         }
 
+        // `enabled` is deliberately not in this list: it is a four-valued startup
+        // strategy, and normalizeFlag() would read "keep" as uninterpretable and
+        // "def" as "not set".
         const bag = out as unknown as Record<string, unknown>;
+        const enabledNorm = normalizeEnabled(bag.enabled);
+        if (enabledNorm === null) {
+            this.log.warn(
+                `dp-coupler: ${label} has an uninterpretable "enabled" value ` +
+                `(${JSON.stringify(bag.enabled)}) – treated as "keep" ` +
+                `(runtime datapoint decides).`
+            );
+            out.enabled = "keep";
+        } else {
+            out.enabled = enabledNorm;
+        }
+
         const flags = [
-            "bidirectional", "forwardOnAck", "forwardChangesOnly", "propagateAck", "enabled",
+            "bidirectional", "forwardOnAck", "forwardChangesOnly", "propagateAck",
         ] as const;
         for (const key of flags) {
             const normalized = normalizeFlag(bag[key]);

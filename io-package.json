@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "news": {
+      "0.4.1": {
+        "en": "Fixed: the 'Enabled' column was only a seed value, applied when the channel datapoint was created and ignored on every later start — a row set to 'no' did not switch the coupling off and the initial synchronization ran for it. It now takes effect at every start and has a fourth value: yes/no force the datapoint, (def) forces the adapter default, (keep) leaves the runtime datapoint alone (the previous behaviour, and what an empty cell means).",
+        "de": "Behoben: die Spalte 'Enabled' war nur ein Saatwert — sie wirkte beim Anlegen des Kanal-Datenpunkts und wurde bei jedem späteren Start ignoriert; eine auf 'no' gesetzte Zeile schaltete die Kopplung nicht ab, und die initiale Synchronisation lief trotzdem für sie. Die Spalte wirkt jetzt bei jedem Start und hat einen vierten Wert: yes/no erzwingen den Datenpunkt, (def) erzwingt den Adapter-Default, (keep) lässt den Laufzeit-Datenpunkt unangetastet (bisheriges Verhalten und Bedeutung einer leeren Zelle)."
+      },
       "0.4.0": {
         "en": "BREAKING: channel datapoints are now named by a new per-coupling ID (channels.<id>) instead of the source state; old channels are deleted, so the 'enabled' switches start from their seed value again (the entry's own field, else the adapter default). New: one source may feed several targets (fan-out), each row with its own switch and filters; channels of deleted couplings are cleaned up at startup.",
         "de": "ACHTUNG, brechende Änderung: die Kanal-Datenpunkte heißen jetzt nach einer neuen ID pro Kopplung (channels.<id>) statt nach dem Quell-Datenpunkt; alte Kanäle werden gelöscht, die 'enabled'-Schalter starten daher wieder mit ihrem Saatwert (Feld des Eintrags, sonst Adapter-Default). Neu: eine Quelle kann mehrere Ziele versorgen (Sternverteilung), jede Zeile mit eigenem Schalter und eigenen Filtern; Kanäle gelöschter Kopplungen werden beim Start aufgeräumt."

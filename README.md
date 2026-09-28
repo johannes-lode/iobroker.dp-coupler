@@ -88,7 +88,8 @@ The **Mapping** tab holds a row-wise table editor — one row per coupling:
 | **↔** | `→` unidirectional, `↔` bidirectional |
 | **Target** | datapoint to write to |
 | **Comment** | free text (stored as `_comment`), multi-line |
-| **Enabled**, **on ACK**, **on change**, **pass ACK** | per-entry overrides; `(def)` means "use the adapter default from the Defaults tab" |
+| **Enabled** | startup strategy for this coupling's switch: `yes`/`no` force it at every start, `(def)` forces the adapter default, `(keep)` leaves the runtime datapoint alone — see [Channel datapoints](#channel-datapoints) |
+| **on ACK**, **on change**, **pass ACK** | per-entry filter overrides; `(def)` means "use the adapter default from the Defaults tab" |
 
 Rows can be added, deleted and reordered; the table exports to CSV. Paths are
 validated as you type: a path must not be empty, must not contain blanks and
@@ -199,11 +200,21 @@ both directions of that coupling. The datapoint persists across adapter restarts
 Channels of couplings that no longer exist are **removed at startup**, so deleting a
 row does not leave datapoints behind.
 
-The initial value is resolved in this order:
-1. `enabledDefault` adapter setting (Defaults tab) — applies to all entries
-2. `enabled` field on the mapping entry — overrides the adapter default for that entry
-3. Once the datapoint exists in the ioBroker database it is never reset; the seed
-   value is only written on first creation.
+The **Enabled** column of the coupling decides what happens to this datapoint at
+**every adapter start**:
+
+| Column value | At every adapter start |
+|---|---|
+| `yes` / `no` | the datapoint is forced to that value — a runtime change lasts until the next start |
+| `(def)` | the datapoint is forced to the *Enable flag default* from the Adapter-Settings tab |
+| `(keep)` | an existing datapoint is left untouched — **use this if you want to switch the coupling at runtime** |
+
+A datapoint that does not exist yet is always created from the adapter default,
+whatever the column says. An empty cell (entries written before this column existed)
+behaves like `(keep)`.
+
+So the column is a *startup strategy*, not a filter: `no` really means off, and
+`(keep)` hands the decision to the datapoint.
 
 **`lastValue`** shows the last value received from the source datapoint. It is updated
 on every source change regardless of the `enabled` state, so the current source value
@@ -280,6 +291,22 @@ Node.js ≥ 20 required.
 `npm run build` and include the updated `build/` in the commit.
 
 ## Changelog
+
+### 0.4.1 — `Enabled` is a startup strategy
+
+The **Enabled** column used to be a *seed* value: it was applied only when the
+channel datapoint did not exist yet, and was silently ignored on every later start.
+Setting a row to `no` therefore did not switch the coupling off, and the initial
+synchronization ran for it as if it were active.
+
+The column now takes effect at **every** adapter start and has a fourth value:
+
+- `yes` / `no` — forced at every start
+- `(def)` — forced to the adapter default at every start
+- `(keep)` — the runtime datapoint decides (the previous behaviour, and what an
+  empty cell means, so existing configurations are unchanged)
+
+Choose `(keep)` for couplings you want to switch through the datapoint at runtime.
 
 ### 0.4.0 — fan-out and per-coupling channels
 

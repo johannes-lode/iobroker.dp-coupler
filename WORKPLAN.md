@@ -462,6 +462,27 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
   `iobroker upload dp-coupler`. Erwartung beim ersten Start: Log meldet vergebene
   IDs und entfernte Alt-Kanäle; Kanäle heißen danach `channels.<id>`.
 
+### Feldtest-Befunde 0.4.x
+
+- [x] **`enabled` war nur ein Saatwert** (Fund User 2026-09-28, Version 0.4.1): die
+  Tabellenspalte wirkte ausschließlich beim Anlegen des Kanal-Datenpunkts und wurde
+  bei jedem späteren Start ignoriert — eine auf „no" gesetzte Zeile schaltete die
+  Kopplung nicht ab, und die initiale Synchronisation lief trotzdem. Die Baseline war
+  also korrekt, die Spalten-Semantik nicht. **Vier-Wert-Strategie** (Vorschlag User):
+  `yes`/`no` erzwingen den Datenpunkt bei jedem Start, `(def)` erzwingt den
+  Adapter-Default, `(keep)` lässt einen vorhandenen Datenpunkt unangetastet und legt
+  einen fehlenden aus dem Adapter-Default an. Fehlendes Feld = `(keep)` →
+  rückwärtskompatibel. `enabled` gehört damit **nicht** mehr zu den Filter-Flags
+  (eigene Normalisierung `normalizeEnabled()`, vier statt drei Spaltenoptionen).
+  `"old"`/`"hold"`/`"runtime"`/`"retain"` werden als Synonyme für `(keep)` akzeptiert.
+- [ ] **`lastState` vor dem Zyklusschutz pflegen** (nächster Commit). Heute returnt
+  der `inFlight`-Guard **vor** der Cache-Pflege, deshalb behält `lastState` nach einem
+  Rückschreiben den alten Wert. Folge: bei **bidirektional + Zeittakt** schreibt der
+  Tick den veralteten Wert zurück und **setzt die Änderung des Ziels zurück** — ein
+  Fehler, der unabhängig von der Sternverteilung besteht und nur unentdeckt blieb,
+  weil die Feldkonfiguration keinen Zeittakt nutzt. `lastState` soll „letzter bekannter
+  Quellwert" sein, unabhängig davon, wer geschrieben hat.
+
 ### Offen / nachgelagert
 - [ ] **Phase 2: bidirektionaler Stern** — Rückschreiben eines Satelliten muss die
   übrigen Sternteilnehmer erreichen (`relayFrom(..., exceptTarget)`), mit der
