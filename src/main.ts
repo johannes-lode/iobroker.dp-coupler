@@ -48,6 +48,7 @@ declare global {
 // ---------------------------------------------------------------------------
 
 interface MappingEntry {
+    id: string;                      // coupling handle; becomes the channels.<id> object name
     source: string;
     target: string;
     bidirectional?: boolean;
@@ -101,6 +102,10 @@ function isPlausibleStateId(value: string): boolean {
     return !value.includes("..");
 }
 
+/**
+ * Checks the two mandatory fields. `id` is deliberately not checked here: it is
+ * backfilled by parseMappings() immediately afterwards, which is the only caller.
+ */
 function isMappingEntry(value: unknown): value is MappingEntry {
     if (typeof value !== "object" || value === null) return false;
     const obj = value as Record<string, unknown>;
@@ -129,7 +134,11 @@ function normalizeFlag(value: unknown): boolean | null | undefined {
     }
     if (typeof value === "string") {
         const s = value.trim().toLowerCase();
-        if (s === "") return undefined;
+        // "def"/"default" is the admin table's placeholder for "not set". It cannot be
+        // the empty string: ConfigSelect matches the stored value against the options
+        // with a loose `==`, and `"" == false` is true in JavaScript — an entry set to
+        // false would then display the "(def)" option instead of "no".
+        if (s === "" || s === "def" || s === "default") return undefined;
         if (s === "true"  || s === "1" || s === "yes" || s === "on")  return true;
         if (s === "false" || s === "0" || s === "no"  || s === "off") return false;
         return null;
@@ -141,8 +150,23 @@ function normalizeFlag(value: unknown): boolean | null | undefined {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function sourceToChannelId(source: string): string {
-    return source.replace(/\./g, "_");
+/**
+ * A coupling id becomes part of an ioBroker object ID (`channels.<id>`), so the
+ * character set is constrained. Dots are forbidden above all: they would create
+ * hierarchy levels (`channels.a.b.enabled`), i.e. sub-channels instead of one
+ * channel. The operator may choose a speaking handle, but not a broken object ID.
+ */
+function isPlausibleCouplingId(value: unknown): value is string {
+    return typeof value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(value.trim());
+}
+
+/**
+ * Generates a short, MAC-address-like handle for a coupling. Only used when an
+ * entry has none — the admin table assigns one when a row is created, and this
+ * backfills entries that came from a CLI import or predate the id field.
+ */
+function generateCouplingId(): string {
+    return Math.random().toString(36).slice(2, 6) + Math.random().toString(36).slice(2, 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,14 +183,19 @@ function dpcLog(...args: unknown[]): void {
 // ---------------------------------------------------------------------------
 
 class DpCoupler extends utils.Adapter {
-    private readonly sourceIndex       = new Map<string, MappingEntry>();
-    private readonly targetIndex       = new Map<string, MappingEntry>();
-    private readonly inFlight          = new Set<string>();
-    private readonly lastState         = new Map<string, ioBroker.State>();
-    private readonly enabledMap        = new Map<string, boolean>();
-    private readonly enabledDpToSource = new Map<string, string>();
-    private readonly destType          = new Map<string, ioBroker.CommonType>();
-    private readonly pendingBaseline   = new Set<string>();
+    // Both indices map a state ID to *all* couplings that use it in that role — a
+    // source may feed several targets (fan-out / star). See
+    // docs/design/fan-out-and-coupling-identity.md.
+    private readonly sourceIndex         = new Map<string, MappingEntry[]>();
+    private readonly targetIndex         = new Map<string, MappingEntry[]>();
+    private readonly inFlight            = new Set<string>();
+    private readonly lastState           = new Map<string, ioBroker.State>();
+    // Keyed by coupling id, not by source: every table row is its own switchable unit.
+    private readonly enabledMap          = new Map<string, boolean>();
+    private readonly enabledDpToCoupling = new Map<string, MappingEntry>();
+    private readonly destType            = new Map<string, ioBroker.CommonType>();
+    private readonly pendingBaseline     = new Set<string>();
+    private readonly couplings: MappingEntry[] = [];
     private syncTimer: ReturnType<typeof setInterval> | null = null;
     private syncIntervalMs = 0;
     private unloading = false;
@@ -203,11 +232,15 @@ class DpCoupler extends utils.Adapter {
         });
 
         // Load mappings from config (tolerant: accepts a JSON string or a native array).
-        let mappings = this.loadMappings();
-        if (mappings === null) {
+        const loaded = this.loadMappings();
+        if (loaded === null) {
             // Error already logged inside loadMappings().
             return;
         }
+        let mappings    = loaded.valid;
+        let idsAssigned = loaded.idsAssigned;
+        // Carries the backfilled coupling ids; used for the canonical string below.
+        let effectiveParsed: unknown[] = loaded.parsed;
 
         // Seeding: an empty config plus a present, valid seed file means initial
         // deployment without UI access. Adopt the seed entries; the file is consumed
@@ -218,9 +251,10 @@ class DpCoupler extends utils.Adapter {
         if (mappings.length === 0) {
             const seed = this.readSeedMappings();
             if (seed !== null) {
-                mappings   = seed.entries;
-                seededRaw  = seed.canonical;
-                seeded     = true;
+                mappings    = seed.entries;
+                seededRaw   = seed.canonical;
+                idsAssigned = 0; // the seed's canonical string already carries them
+                seeded      = true;
             }
         }
 
@@ -237,9 +271,14 @@ class DpCoupler extends utils.Adapter {
         // The canonical string is never pruned: it keeps every entry the operator wrote,
         // including the ones the loader rejected. A rejected entry stays visible (and
         // fixable) in the admin editor instead of quietly vanishing from the config.
+        // Backfilled coupling ids must be persisted, otherwise the channel objects would
+        // be renamed on every start. That is an *addition* to the stored entries, so it
+        // does not conflict with "never pruned".
         let canonicalRaw: string;
         if (seeded) {
             canonicalRaw = seededRaw;
+        } else if (idsAssigned > 0) {
+            canonicalRaw = JSON.stringify(effectiveParsed, null, 2);
         } else if (typeof this.config.mappingsRaw === "string") {
             canonicalRaw = this.config.mappingsRaw;
         } else {
@@ -254,8 +293,13 @@ class DpCoupler extends utils.Adapter {
             }
             patch.configVersion = CONFIG_VERSION;
         }
-        if (seeded || Array.isArray(this.config.mappingsRaw)) {
+        if (seeded || idsAssigned > 0 || Array.isArray(this.config.mappingsRaw)) {
             patch.mappingsRaw = canonicalRaw;
+            if (idsAssigned > 0) {
+                this.log.info(
+                    `dp-coupler: assigned ${idsAssigned} missing coupling id(s) – persisted.`
+                );
+            }
         }
 
         // Mirror the canonical string as an array into mappingsTable. The admin UI's
@@ -295,25 +339,39 @@ class DpCoupler extends utils.Adapter {
             return;
         }
 
+        // Fan-out: a source may feed several targets, so both indices hold lists.
+        // Duplicate ids and duplicate (source, target) pairs were already rejected in
+        // parseMappings(), so every entry here is a distinct coupling.
+        const sourceUseCount = new Map<string, number>();
         for (const entry of mappings) {
-            if (this.sourceIndex.has(entry.source)) {
+            sourceUseCount.set(entry.source, (sourceUseCount.get(entry.source) ?? 0) + 1);
+        }
+
+        for (const entry of mappings) {
+            // Phase 1 of the star design: fan-out is unidirectional. The reverse write of
+            // a bidirectional branch lands on the star point, where the inFlight guard
+            // necessarily swallows the resulting event — the sibling branches would never
+            // see the value. Downgrade instead of discarding, so the distribution keeps
+            // working. See docs/design/fan-out-and-coupling-identity.md §5.
+            if (entry.bidirectional === true && (sourceUseCount.get(entry.source) ?? 0) > 1) {
                 this.log.warn(
-                    `dp-coupler: duplicate source "${entry.source}" in mappings – ` +
-                    `only the first entry is used.`
+                    `dp-coupler: coupling "${entry.id}" (${entry.source} → ${entry.target}) is ` +
+                    `bidirectional, but "${entry.source}" feeds several targets – treated as ` +
+                    `unidirectional (the reverse direction would not reach the other branches).`
                 );
-                continue;
+                entry.bidirectional = false;
             }
-            this.sourceIndex.set(entry.source, entry);
+
+            this.couplings.push(entry);
+
+            const forwards = this.sourceIndex.get(entry.source);
+            if (forwards) forwards.push(entry);
+            else this.sourceIndex.set(entry.source, [entry]);
 
             if (entry.bidirectional === true) {
-                if (this.targetIndex.has(entry.target)) {
-                    this.log.warn(
-                        `dp-coupler: duplicate bidirectional target "${entry.target}" in mappings – ` +
-                        `only the first entry is used.`
-                    );
-                } else {
-                    this.targetIndex.set(entry.target, entry);
-                }
+                const reverses = this.targetIndex.get(entry.target);
+                if (reverses) reverses.push(entry);
+                else this.targetIndex.set(entry.target, [entry]);
             }
         }
 
@@ -323,9 +381,10 @@ class DpCoupler extends utils.Adapter {
         // malformed entries we know about, but an unexpected failure here must still cost
         // only the offending entry. Without the try/catch a single rejected await would
         // abort onReady() — no "ready", no info.connection, no relay at all.
-        const brokenSources: string[] = [];
-        for (const [sourceId, entry] of this.sourceIndex) {
-            const channelId = sourceToChannelId(sourceId);
+        const brokenCouplings: MappingEntry[] = [];
+        for (const entry of this.couplings) {
+            const sourceId  = entry.source;
+            const channelId = entry.id;
             try {
                 // Determine source datapoint type for the lastValue object definition and,
                 // together with the target type below, for the coercion cache (destType).
@@ -347,9 +406,17 @@ class DpCoupler extends utils.Adapter {
                     }
                 } catch { /* leave unset → coercion passes through */ }
 
+                // The channel carries the informative fields, so the object tree shows
+                // what the coupling does without a look into the configuration.
+                const comment = (entry as unknown as Record<string, unknown>)._comment;
                 await this.setObjectAsync(`channels.${channelId}`, {
                     type: "channel",
-                    common: { name: sourceId },
+                    common: {
+                        name: `${entry.source} → ${entry.target}`,
+                        ...(typeof comment === "string" && comment.trim() !== ""
+                            ? { desc: comment.trim() }
+                            : {}),
+                    },
                     native: {},
                 });
                 await this.setObjectAsync(`channels.${channelId}.enabled`, {
@@ -387,31 +454,28 @@ class DpCoupler extends utils.Adapter {
                         : (this.config.enabledDefault ?? true);
                     await this.setStateAsync(`channels.${channelId}.enabled`, { val: currentEnabled, ack: true });
                 }
-                this.enabledMap.set(sourceId, currentEnabled);
-                this.enabledDpToSource.set(`${this.namespace}.channels.${channelId}.enabled`, sourceId);
+                this.enabledMap.set(entry.id, currentEnabled);
+                this.enabledDpToCoupling.set(`${this.namespace}.channels.${channelId}.enabled`, entry);
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : String(err);
                 this.log.warn(
-                    `dp-coupler: could not set up mapping "${sourceId}" → "${entry.target}": ` +
-                    `${message} – entry dropped, all other mappings continue.`
+                    `dp-coupler: could not set up coupling "${entry.id}" ` +
+                    `(${sourceId} → ${entry.target}): ${message} – entry dropped, ` +
+                    `all other couplings continue.`
                 );
-                brokenSources.push(sourceId);
+                brokenCouplings.push(entry);
             }
         }
 
-        // Drop the failed entries entirely, so no half-initialized coupling stays behind.
-        for (const sourceId of brokenSources) {
-            const entry = this.sourceIndex.get(sourceId);
-            if (entry && this.targetIndex.get(entry.target) === entry) {
-                this.targetIndex.delete(entry.target);
-            }
-            this.sourceIndex.delete(sourceId);
-            this.destType.delete(sourceId);
-            this.enabledMap.delete(sourceId);
-            this.enabledDpToSource.delete(
-                `${this.namespace}.channels.${sourceToChannelId(sourceId)}.enabled`
-            );
+        // Drop the failed couplings entirely, so no half-initialized one stays behind.
+        for (const entry of brokenCouplings) {
+            this.dropCoupling(entry);
         }
+
+        // Remove channels of couplings that no longer exist. A permanent mechanism, not
+        // a migration step — which is why it also clears the pre-0.4.0 per-source
+        // channels on the first start after the upgrade, with no special-case code.
+        await this.removeOrphanChannels();
 
         // Subscribe to own enabled datapoints so runtime changes update enabledMap.
         await this.subscribeStatesAsync("channels.*.enabled");
@@ -432,10 +496,12 @@ class DpCoupler extends utils.Adapter {
 
         // Pre-populate lastValue from lastState cache, preserving the original timestamps
         // so the displayed value age reflects the real source event, not the adapter start.
-        for (const [sourceId, cached] of this.lastState) {
-            const channelId = sourceToChannelId(sourceId);
+        // One datapoint per coupling: the branches of a star share the same value.
+        for (const entry of this.couplings) {
+            const cached = this.lastState.get(entry.source);
+            if (!cached) continue;
             try {
-                await this.setStateAsync(`channels.${channelId}.lastValue`, {
+                await this.setStateAsync(`channels.${entry.id}.lastValue`, {
                     val: cached.val,
                     ack: true,
                     ts:  cached.ts,
@@ -452,7 +518,9 @@ class DpCoupler extends utils.Adapter {
         // their first event (see onStateChange) or a manual enable. runBaselinePass()
         // is a reusable method — foresight for a future connection-driven re-check
         // (see docs/design/initial-synchronization-baseline.md).
-        for (const sourceId of this.sourceIndex.keys()) this.pendingBaseline.add(sourceId);
+        // Keyed per coupling: with fan-out a per-source key would count the baseline as
+        // done after the first target and leave the siblings without an initial value.
+        for (const entry of this.couplings) this.pendingBaseline.add(entry.id);
         await this.runBaselinePass();
 
         const unitMultipliers: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
@@ -467,12 +535,76 @@ class DpCoupler extends utils.Adapter {
             );
         }
 
-        const biCount = this.targetIndex.size;
+        const biCount    = this.couplings.filter(e => e.bidirectional === true).length;
+        const fanOutCount = Array.from(this.sourceIndex.values()).filter(l => l.length > 1).length;
         this.log.info(
-            `dp-coupler: ready – relaying ${this.sourceIndex.size} datapoint(s)` +
-            (biCount > 0 ? `, ${biCount} bidirectional` : ``) + `.`
+            `dp-coupler: ready – relaying ${this.couplings.length} coupling(s) ` +
+            `from ${this.sourceIndex.size} source(s)` +
+            (biCount > 0 ? `, ${biCount} bidirectional` : ``) +
+            (fanOutCount > 0 ? `, ${fanOutCount} source(s) fanned out` : ``) + `.`
         );
         await this.setStateAsync("info.connection", { val: true, ack: true });
+    }
+
+    /**
+     * Removes a coupling from every runtime structure. Used when its channel setup
+     * failed, so no half-initialized coupling stays behind. `destType` entries are
+     * kept: they are per state ID and may still be needed by a sibling coupling.
+     */
+    private dropCoupling(entry: MappingEntry): void {
+        const unlist = (map: Map<string, MappingEntry[]>, key: string): void => {
+            const list = map.get(key);
+            if (!list) return;
+            const rest = list.filter(e => e !== entry);
+            if (rest.length > 0) map.set(key, rest);
+            else map.delete(key);
+        };
+        unlist(this.sourceIndex, entry.source);
+        unlist(this.targetIndex, entry.target);
+        const at = this.couplings.indexOf(entry);
+        if (at >= 0) this.couplings.splice(at, 1);
+        this.enabledMap.delete(entry.id);
+        this.pendingBaseline.delete(entry.id);
+        this.enabledDpToCoupling.delete(`${this.namespace}.channels.${entry.id}.enabled`);
+    }
+
+    /**
+     * Deletes `channels.*` objects that no current coupling claims. Permanent
+     * housekeeping rather than a migration step: it removes the channels of couplings
+     * the operator has deleted, and as a side effect the pre-0.4.0 per-source channels
+     * on the first start after the upgrade. Non-fatal throughout — a failure here must
+     * never keep the adapter from relaying.
+     */
+    private async removeOrphanChannels(): Promise<void> {
+        const wanted = new Set(this.couplings.map(e => e.id));
+        let removed = 0;
+        try {
+            const objects = await this.getAdapterObjectsAsync();
+            const prefix  = `${this.namespace}.channels.`;
+            const seen    = new Set<string>();
+            for (const id of Object.keys(objects)) {
+                if (!id.startsWith(prefix)) continue;
+                const channelId = id.slice(prefix.length).split(".")[0];
+                if (!channelId || wanted.has(channelId) || seen.has(channelId)) continue;
+                seen.add(channelId);
+                try {
+                    await this.delObjectAsync(`channels.${channelId}`, { recursive: true });
+                    removed++;
+                } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.log.warn(
+                        `dp-coupler: could not remove stale channel "${channelId}": ${message}`
+                    );
+                }
+            }
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.log.warn(`dp-coupler: channel cleanup skipped: ${message}`);
+            return;
+        }
+        if (removed > 0) {
+            this.log.info(`dp-coupler: removed ${removed} stale channel(s).`);
+        }
     }
 
     private onUnload(callback: () => void): void {
@@ -498,21 +630,20 @@ class DpCoupler extends utils.Adapter {
         if (!state || state.val === null || state.val === undefined) return;
 
         // Own enabled datapoint changed: update cache and confirm command if needed.
-        const enabledSource = this.enabledDpToSource.get(id);
-        if (enabledSource !== undefined) {
-            const prev   = this.enabledMap.get(enabledSource);
+        const enabledCoupling = this.enabledDpToCoupling.get(id);
+        if (enabledCoupling !== undefined) {
+            const prev   = this.enabledMap.get(enabledCoupling.id);
             const newVal = Boolean(state.val);
-            this.enabledMap.set(enabledSource, newVal);
+            this.enabledMap.set(enabledCoupling.id, newVal);
             // Enable transition (false→true): push the current source value.
-            // force = source was never baselined this life (e.g. disabled at start);
+            // force = this coupling was never baselined this life (e.g. disabled at start);
             // otherwise compare-then-write corrects any drift accumulated while disabled.
             // prev === false guards against the ack:true confirmation re-triggering this.
             if (newVal && prev === false) {
-                const entry  = this.sourceIndex.get(enabledSource);
-                const cached = this.lastState.get(enabledSource);
-                if (entry && cached && cached.val !== null && cached.val !== undefined) {
-                    const force = this.pendingBaseline.delete(enabledSource);
-                    await this.baselineWrite(entry, cached.val, cached.q, cached.ack, force);
+                const cached = this.lastState.get(enabledCoupling.source);
+                if (cached && cached.val !== null && cached.val !== undefined) {
+                    const force = this.pendingBaseline.delete(enabledCoupling.id);
+                    await this.baselineWrite(enabledCoupling, cached.val, cached.q, cached.ack, force);
                 }
             }
             if (!state.ack) {
@@ -535,40 +666,60 @@ class DpCoupler extends utils.Adapter {
             return;
         }
 
-        // Determine relay direction and destination.
-        const forwardEntry = this.sourceIndex.get(id);
-        const entry        = forwardEntry ?? this.targetIndex.get(id);
-        if (!entry) return;
-        const destination  = forwardEntry ? entry.target : entry.source;
-        dpcLog(`[dpc]   ${forwardEntry ? "fwd" : "rev"}  →  ${destination}`);
+        // Determine which couplings this state feeds. With fan-out a source can serve
+        // several couplings, and a state may even be the source of some couplings and
+        // the (bidirectional) target of others — every coupling is served on its own.
+        const forwards = this.sourceIndex.get(id) ?? [];
+        const reverses = this.targetIndex.get(id) ?? [];
+        if (forwards.length === 0 && reverses.length === 0) return;
+        dpcLog(`[dpc]   ${forwards.length} fwd, ${reverses.length} rev`);
 
-        // Update last known source state and lastValue DP (forward direction only).
-        // Done before the enabled check so the cache and DP always reflect the current
-        // source value, even when the channel is disabled.
-        if (forwardEntry) {
+        // Update last known source state and lastValue DPs (forward direction only).
+        // Done before the enabled check so the cache and DPs always reflect the current
+        // source value, even when a coupling is disabled.
+        if (forwards.length > 0) {
             this.lastState.set(id, state);
-            const channelId = sourceToChannelId(id);
-            this.setStateAsync(`channels.${channelId}.lastValue`, {
-                val: state.val,
-                ack: true,
-                ts:  state.ts,
-                lc:  state.lc,
-                q:   state.q,
-            }).catch(() => undefined);
+            for (const entry of forwards) {
+                this.setStateAsync(`channels.${entry.id}.lastValue`, {
+                    val: state.val,
+                    ack: true,
+                    ts:  state.ts,
+                    lc:  state.lc,
+                    q:   state.q,
+                }).catch(() => undefined);
+            }
         }
 
-        // Enabled check: skip relay when channel is disabled.
-        if (this.enabledMap.get(entry.source) === false) {
-            dpcLog(`[dpc]   enabled=false → skip`);
+        for (const entry of forwards) await this.relayCoupling(entry, "forward", state);
+        for (const entry of reverses) await this.relayCoupling(entry, "reverse", state);
+    }
+
+    /**
+     * Applies one coupling to an incoming source state: enabled check, baseline
+     * completion, periodic-only guard, the two filters, then the write. Split out of
+     * onStateChange() because with fan-out the same state drives several couplings,
+     * each with its own flags — the filters are per coupling, not per event.
+     */
+    private async relayCoupling(
+        entry: MappingEntry,
+        direction: "forward" | "reverse",
+        state: ioBroker.State,
+    ): Promise<void> {
+        const destination = direction === "forward" ? entry.target : entry.source;
+        const ifs = (): string => `[${[...this.inFlight].join(",") || "∅"}]`;
+
+        // Enabled check: skip relay when this coupling is disabled.
+        if (this.enabledMap.get(entry.id) === false) {
+            dpcLog(`[dpc]   ${entry.id}: enabled=false → skip`);
             return;
         }
 
-        // Baseline completion: the first event of a still-pending source fulfills its
+        // Baseline completion: the first event of a still-pending coupling fulfills its
         // initial baseline (bypassing the forwardOnAck/forwardChangesOnly filters), so a
         // rarely-changing datapoint is synchronized on its first arrival after start.
-        if (forwardEntry && this.pendingBaseline.has(id)) {
-            this.pendingBaseline.delete(id);
-            dpcLog(`[dpc]   baseline completion via first event`);
+        if (direction === "forward" && this.pendingBaseline.has(entry.id)) {
+            this.pendingBaseline.delete(entry.id);
+            dpcLog(`[dpc]   ${entry.id}: baseline completion via first event`);
             await this.baselineWrite(entry, state.val, state.q, state.ack, false);
             return;
         }
@@ -584,7 +735,7 @@ class DpCoupler extends utils.Adapter {
         // forwardOnAck filter: default false — skip ack=true device confirmations.
         const shouldForwardOnAck = entry.forwardOnAck ?? this.config.forwardOnAckDefault ?? false;
         if (state.ack && !shouldForwardOnAck) {
-            dpcLog(`[dpc]   forwardOnAck: ack=T  shouldFwd=${shouldForwardOnAck}  → FILTERED`);
+            dpcLog(`[dpc]   ${entry.id}: forwardOnAck: ack=T  shouldFwd=${shouldForwardOnAck}  → FILTERED`);
             return;
         }
 
@@ -592,21 +743,21 @@ class DpCoupler extends utils.Adapter {
         // state.lc (last-change) < state.ts (last-set) means value was re-written unchanged.
         const shouldForwardChangesOnly = entry.forwardChangesOnly ?? this.config.forwardChangesOnlyDefault ?? true;
         if (shouldForwardChangesOnly && state.lc !== state.ts) {
-            dpcLog(`[dpc]   forwardChangesOnly: lc<ts(+${state.ts - state.lc}ms)  → FILTERED`);
+            dpcLog(`[dpc]   ${entry.id}: forwardChangesOnly: lc<ts(+${state.ts - state.lc}ms)  → FILTERED`);
             return;
         }
 
         this.inFlight.add(destination);
-        dpcLog(`[dpc]   RELAY  inFlight=${ifs()}`);
+        dpcLog(`[dpc]   ${entry.id}: RELAY → ${destination}  inFlight=${ifs()}`);
         try {
             const shouldPropagateAck = entry.propagateAck ?? this.config.propagateAckDefault ?? false;
-            const outVal = this.resolveValue(entry, forwardEntry ? "forward" : "reverse", state.val, destination);
+            const outVal = this.resolveValue(entry, direction, state.val, destination);
             await this.setForeignStateAsync(destination, {
                 val: outVal,
                 ack: shouldPropagateAck ? state.ack : false,
                 q:   state.q,
             });
-            this.log.debug(`dp-coupler: ${id} → ${destination} = ${outVal}`);
+            this.log.debug(`dp-coupler: ${entry.id}: → ${destination} = ${outVal}`);
         } catch (err: unknown) {
             this.inFlight.delete(destination);
             const message = err instanceof Error ? err.message : String(err);
@@ -620,10 +771,10 @@ class DpCoupler extends utils.Adapter {
     // -----------------------------------------------------------------------
 
     private async onSyncTick(): Promise<void> {
-        for (const [sourceId, entry] of this.sourceIndex) {
+        for (const entry of this.couplings) {
             if (this.unloading) break;
-            if (this.enabledMap.get(sourceId) === false) continue;
-            const cached = this.lastState.get(sourceId);
+            if (this.enabledMap.get(entry.id) === false) continue;
+            const cached = this.lastState.get(entry.source);
             if (!cached) continue;
             const dest = entry.target;
             this.inFlight.add(dest);
@@ -659,15 +810,16 @@ class DpCoupler extends utils.Adapter {
      */
     private async runBaselinePass(): Promise<void> {
         let written = 0;
-        for (const sourceId of Array.from(this.pendingBaseline)) {
+        const byId = new Map(this.couplings.map(e => [e.id, e]));
+        for (const couplingId of Array.from(this.pendingBaseline)) {
             if (this.unloading) break;
-            if (!this.pendingBaseline.has(sourceId)) continue;          // completed concurrently
-            if (this.enabledMap.get(sourceId) === false) continue;      // stays pending
-            const cached = this.lastState.get(sourceId);
+            if (!this.pendingBaseline.has(couplingId)) continue;          // completed concurrently
+            if (this.enabledMap.get(couplingId) === false) continue;      // stays pending
+            const entry = byId.get(couplingId);
+            if (!entry) { this.pendingBaseline.delete(couplingId); continue; }
+            const cached = this.lastState.get(entry.source);
             if (!cached || cached.val === null || cached.val === undefined) continue; // awaits first event
-            const entry = this.sourceIndex.get(sourceId);
-            if (!entry) { this.pendingBaseline.delete(sourceId); continue; }
-            this.pendingBaseline.delete(sourceId);
+            this.pendingBaseline.delete(couplingId);
             if (await this.baselineWrite(entry, cached.val, cached.q, cached.ack, false)) written++;
         }
         this.log.info(
@@ -801,7 +953,7 @@ class DpCoupler extends utils.Adapter {
     private parseMappings(
         raw: unknown,
         label: string,
-    ): { valid: MappingEntry[]; parsed: unknown[] } | null {
+    ): { valid: MappingEntry[]; parsed: unknown[]; idsAssigned: number } | null {
         let parsed: unknown;
         if (typeof raw === "string") {
             try {
@@ -821,6 +973,10 @@ class DpCoupler extends utils.Adapter {
         }
 
         const valid: MappingEntry[] = [];
+        const seenIds   = new Set<string>();
+        const seenPairs = new Set<string>();
+        let idsAssigned = 0;
+
         for (let i = 0; i < parsed.length; i++) {
             const candidate = parsed[i];
             if (!isMappingEntry(candidate)) {
@@ -830,10 +986,51 @@ class DpCoupler extends utils.Adapter {
                 );
                 continue;
             }
+
+            // Backfill a missing or unusable coupling id. Written into the *parsed*
+            // object, so the caller's canonical string carries the same id the runtime
+            // uses — the admin table assigns ids for new rows, this covers CLI imports
+            // and entries that predate the field.
+            const bagRaw = candidate as unknown as Record<string, unknown>;
+            if (!isPlausibleCouplingId(bagRaw.id)) {
+                if (bagRaw.id !== undefined && bagRaw.id !== null && bagRaw.id !== "") {
+                    this.log.warn(
+                        `dp-coupler: ${label} entry [${i}] has an unusable id ` +
+                        `(${JSON.stringify(bagRaw.id)}) – replaced by a generated one.`
+                    );
+                }
+                let fresh = generateCouplingId();
+                while (seenIds.has(fresh)) fresh = generateCouplingId();
+                bagRaw.id = fresh;
+                idsAssigned++;
+            } else {
+                bagRaw.id = (bagRaw.id as string).trim();
+            }
+
             const entry = this.normalizeEntry(candidate, `${label} entry [${i}]`);
-            if (entry !== null) valid.push(entry); // else: reason already logged
+            if (entry === null) continue; // reason already logged
+
+            if (seenIds.has(entry.id)) {
+                this.log.warn(
+                    `dp-coupler: ${label} entry [${i}] repeats the coupling id ` +
+                    `"${entry.id}" – skipped (ids must be unique; they name the channel).`
+                );
+                continue;
+            }
+            const pair = `${entry.source} ${entry.target}`;
+            if (seenPairs.has(pair)) {
+                this.log.warn(
+                    `dp-coupler: ${label} entry [${i}] repeats the coupling ` +
+                    `"${entry.source}" → "${entry.target}" – skipped.`
+                );
+                continue;
+            }
+
+            seenIds.add(entry.id);
+            seenPairs.add(pair);
+            valid.push(entry);
         }
-        return { valid, parsed };
+        return { valid, parsed, idsAssigned };
     }
 
     /**
@@ -883,9 +1080,11 @@ class DpCoupler extends utils.Adapter {
     /**
      * Loads and validates the mapping configuration from this.config.mappingsRaw
      * (ioBroker DB, edited via admin UI). Accepts both a JSON string and a native array.
-     * Returns the validated array on success, or null on any unrecoverable error.
+     * Returns the validated entries together with the unfiltered parsed array (which
+     * carries any backfilled coupling ids, so the caller can persist them) and how
+     * many ids were assigned. Null on any unrecoverable error.
      */
-    private loadMappings(): MappingEntry[] | null {
+    private loadMappings(): { valid: MappingEntry[]; parsed: unknown[]; idsAssigned: number } | null {
         const result = this.parseMappings(this.config.mappingsRaw ?? "[]", "mappingsRaw");
         if (result === null) return null;
         const skipped = result.parsed.length - result.valid.length;
@@ -893,7 +1092,7 @@ class DpCoupler extends utils.Adapter {
             `dp-coupler: loaded ${result.valid.length} valid mapping(s)` +
             (skipped > 0 ? `, ${skipped} skipped (see warnings above)` : ``) + `.`
         );
-        return result.valid;
+        return result;
     }
 
     /**

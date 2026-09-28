@@ -17,6 +17,11 @@ are created separately.
   and its direct interactions (filter bypass, `enabled`, coercion,
   `propagateAck`, cycle guard, periodic-only mode). Design record:
   [`../design/initial-synchronization-baseline.md`](../design/initial-synchronization-baseline.md).
+- [fan-out-and-coupling-identity.testspec.md](fan-out-and-coupling-identity.testspec.md)
+  — 1:n distribution, the per-coupling `id` and the channel identity it names, orphan
+  cleanup (including the pre-0.4.0 channels), the downgrade of bidirectional star
+  branches, and the per-coupling baseline. Design record:
+  [`../design/fan-out-and-coupling-identity.md`](../design/fan-out-and-coupling-identity.md).
 - [malformed-mapping-entries.testspec.md](malformed-mapping-entries.testspec.md)
   — robustness against incomplete mapping entries: a malformed entry may only be
   dropped with a logged reason, never disturb the other entries or the adapter

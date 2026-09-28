@@ -83,6 +83,7 @@ The **Mapping** tab holds a row-wise table editor — one row per coupling:
 
 | Column | Meaning |
 |---|---|
+| **ID** | handle of the coupling; names its `channels.<id>` datapoints. Generated when the row is created, editable, must stay unique (letters, digits, `_`, `-`; no dots) |
 | **Source** | datapoint to read from; pick it from the object dialog or paste the path |
 | **↔** | `→` unidirectional, `↔` bidirectional |
 | **Target** | datapoint to write to |
@@ -92,6 +93,13 @@ The **Mapping** tab holds a row-wise table editor — one row per coupling:
 Rows can be added, deleted and reordered; the table exports to CSV. Paths are
 validated as you type: a path must not be empty, must not contain blanks and
 must not start or end with a dot.
+
+**Fan-out (one source, several targets)** is supported: enter one row per target with
+the same source. Each row is an independent coupling with its own switch and its own
+filter flags. Such branches are relayed **one-directionally** — if you mark a row
+bidirectional while its source feeds several targets, the adapter downgrades it to
+unidirectional and says so in the log, because a value written back to the star point
+could not reach the sibling branches.
 
 Below the table, **Mappings (JSON view)** shows the stored configuration in its
 canonical form. It is **read-only** — the table is the editor — and has a copy
@@ -145,8 +153,9 @@ must be non-empty, plausible state IDs (no blanks, no leading/trailing dot, no
 logged with its reason and skipped; **all other entries keep relaying**, and the
 entry stays in the stored configuration so you can see and correct it. Optional
 flags are interpreted tolerantly (`true`/`"true"`/`"yes"`/`1` and the negative
-spellings); a value that cannot be interpreted is ignored with a warning and the
-adapter default applies.
+spellings; `"def"` — what the table's `(def)` option stores — means "not set"); a
+value that cannot be interpreted is ignored with a warning and the adapter default
+applies.
 
 **Note for bidirectional entries:** `forwardOnAck`, `forwardChangesOnly`, and
 `propagateAck` apply to both relay directions of the same entry.
@@ -170,20 +179,25 @@ Save the configuration; the adapter restarts and activates the new mappings.
 
 ## Channel datapoints
 
-For every active mapping entry the adapter creates two datapoints in its own namespace:
+For every coupling the adapter creates two datapoints in its own namespace:
 
 ```
-dp-coupler.0.channels.<channelId>.enabled    boolean, read/write
-dp-coupler.0.channels.<channelId>.lastValue  read-only, type matches source
+dp-coupler.0.channels.<id>.enabled    boolean, read/write
+dp-coupler.0.channels.<id>.lastValue  read-only, type matches source
 ```
 
-The channel ID is the source state ID with all dots replaced by underscores — e.g.
-`modbus.0.holdingRegisters.8` becomes `modbus_0_holdingRegisters_8`.
+`<id>` is the coupling's **ID column** — one switch per table row, so a source that
+feeds several targets can have individual branches switched off. The channel object
+itself shows `source → target` as its name and the entry's comment as its
+description, so the object tree is readable without opening the configuration.
 
-**`enabled`** controls whether the relay is active for this channel at runtime.
-Setting it to `false` stops the adapter from forwarding source changes to the target;
-`lastValue` continues to be updated regardless. For bidirectional entries one switch
-controls both directions. The datapoint persists across adapter restarts.
+**`enabled`** controls whether this coupling relays at runtime. Setting it to `false`
+stops the adapter from forwarding source changes to that target; `lastValue`
+continues to be updated regardless. For bidirectional entries one switch controls
+both directions of that coupling. The datapoint persists across adapter restarts.
+
+Channels of couplings that no longer exist are **removed at startup**, so deleting a
+row does not leave datapoints behind.
 
 The initial value is resolved in this order:
 1. `enabledDefault` adapter setting (Defaults tab) — applies to all entries
@@ -265,8 +279,54 @@ Node.js ≥ 20 required.
 `build/` is committed to the repository. Before pushing a release, run
 `npm run build` and include the updated `build/` in the commit.
 
+## Changelog
+
+### 0.4.0 — fan-out and per-coupling channels
+
+**Breaking:** the channel datapoints are renamed. They were derived from the source
+state ID (`channels.modbus_0_holdingRegisters_8.*`); they are now named by the
+coupling's new **ID** field (`channels.<id>.*`).
+
+- The old `channels.<source>.*` datapoints are **not migrated** and are **deleted**
+  at startup. The new switches therefore start from their seed value — the row's own
+  `enabled` field if it has one, otherwise the *Enable flag default* from the
+  Adapter-Settings tab. A switch you had turned off is not remembered; check the
+  channels once after the upgrade. Anything referencing the old datapoint IDs
+  (scripts, VIS, history) must be updated.
+- Every mapping entry gains an `id` field. It is assigned automatically — for new
+  rows by the admin table, for existing entries and CLI imports by the adapter on
+  first start, which writes them into the stored configuration. **No manual step is
+  needed**, but the stored JSON will differ from what you imported.
+- **New:** one source may feed several targets (fan-out / star). Each row is an
+  independent coupling with its own switch and filter flags. Bidirectional rows on a
+  multiply used source are downgraded to unidirectional with a log warning.
+- **New:** channels of deleted couplings are removed at startup instead of lingering.
+
+Earlier versions were concept studies, so this break was accepted deliberately
+rather than carrying a migration path.
+
+### 0.3.0 — table editor
+
+Row-wise table editor for the couplings in the admin UI, with datapoint pickers and
+per-entry columns; the JSON became a read-only view with a copy button. Malformed
+mapping entries are dropped with a logged reason instead of disturbing the adapter.
+
+### 0.2.0 — configuration robustness
+
+Tolerant `mappingsRaw` (JSON string or native array) with self-heal, config default
+normalization via `configVersion`, one-shot seeding from `mappings.seed.json`.
+
+### 0.1.0
+
+Initial proof-of-concept release.
+
 ## Roadmap
 
+- **Bidirectional fan-out** — let a value written back by one satellite reach the
+  other branches of a star, with the table row order as precedence
+  ([design record](docs/design/fan-out-and-coupling-identity.md) §5)
+- **Cycle detection** — warn at startup about configurations that couple in a circle
+  (`A→B, B→A` and longer chains); `inFlight` already prevents the runaway at runtime
 - **Fail counter** — set `info.connection` to `false` after a configurable
   number of consecutive write failures per mapping
 - **Value conversion** — optional `transform` expression per mapping entry

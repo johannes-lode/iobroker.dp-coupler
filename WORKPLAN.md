@@ -426,6 +426,50 @@ Fehler, aber ein Grund, es sauber zu machen.
   deutsche Begriffe sind meist länger („on change" → „nur bei Änderung").
 - [ ] Version 0.3.1 (Patch) + News-Eintrag.
 
+## Sternverteilung (1:n) und Kopplungs-Identität — Version 0.4.0 (2026-09-28)
+
+Design-Record: **[`docs/design/fan-out-and-coupling-identity.md`](docs/design/fan-out-and-coupling-identity.md)**,
+Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](docs/testing/fan-out-and-coupling-identity.testspec.md).
+
+- [x] `sourceIndex`/`targetIndex` auf `Map<string, MappingEntry[]>`; neues Feld
+  `couplings` als Iterationsbasis in Bediener-Reihenfolge.
+- [x] `MappingEntry.id` (Pflichtfeld): Kurz-Handle, vergeben von der Tabelle beim
+  Anlegen der Zeile (`defaultFunc`), nachgerüstet vom Adapter für CLI-Import und
+  Bestand und **persistiert** (sonst würden die Kanäle bei jedem Start umbenannt).
+  Zeichensatz `^[A-Za-z0-9_-]{1,32}$`, Punkte verboten (sonst Unterkanäle).
+  Doppelte IDs und doppelte `(source,target)`-Paare werden in `parseMappings()`
+  verworfen. `uniqueColumns` von `source` auf `id` umgestellt.
+- [x] Kanäle heißen `channels.<id>`; `common.name` = `source → target`,
+  `common.desc` = Kommentar. `enabledMap`/`pendingBaseline` pro Kopplung.
+- [x] `relayCoupling()` aus `onStateChange()` herausgelöst — ein Ereignis treibt
+  mehrere Kopplungen, jede mit eigenen Filtern. Ein Datenpunkt kann gleichzeitig
+  Quelle einiger und (bidirektionales) Ziel anderer Kopplungen sein; beide
+  Richtungen werden jetzt bedient (vorher gewann die Vorwärtsrichtung).
+- [x] `removeOrphanChannels()` — dauerhaftes Aufräumen, kein Migrationsschritt;
+  entfernt dadurch auch die Pre-0.4.0-Kanäle beim ersten Start. `dropCoupling()`
+  für die Fehlerisolierung.
+- [x] Bidirektional + mehrfach genutzte Quelle → Rückstufung auf unidirektional mit
+  Warnung (Phase 1, s. Design-Record §5).
+- [x] **Brechende Änderung** (Freigabe User 2026-09-28: frühere Versionen waren
+  Konzeptstudien): kein `CONFIG_VERSION`-Bump, keine Migration der alten
+  `channels.<source>.*`. Die neuen Schalter starten mit ihrem Saatwert
+  (`entry.enabled`, sonst Adapter-Default). Dokumentiert im **neuen
+  README-Changelog**.
+- [x] Version 0.4.0 + News (en/de); Typecheck mit echten ioBroker-Typen sauber,
+  jsonConfig gegen das offizielle Schema validiert, ID-Generator und Validator
+  gegen die echte Auswertungsmechanik durchgerechnet.
+- [ ] **Build/Deploy + Feldtest (User).** `npm run build`, `build/` mitcommitten,
+  `iobroker upload dp-coupler`. Erwartung beim ersten Start: Log meldet vergebene
+  IDs und entfernte Alt-Kanäle; Kanäle heißen danach `channels.<id>`.
+
+### Offen / nachgelagert
+- [ ] **Phase 2: bidirektionaler Stern** — Rückschreiben eines Satelliten muss die
+  übrigen Sternteilnehmer erreichen (`relayFrom(..., exceptTarget)`), mit der
+  Tabellen-Reihenfolge als Vorrang und einem Zeitfenster. Eigener Design-Record.
+- [ ] **Zyklus-Erkennung** (Backlog, Entscheidung 2026-09-28): Startup-Prüfung auf
+  `A→B, B→A` und längere Ketten. `inFlight` schützt zur Laufzeit; die Erkennung ist
+  Komfort, vorerst Sache des Bedieners.
+
 ### Stufe 3 — später
 - [ ] **Round-Trip nicht dargestellter Felder erneut bewerten.** Datenverlust bei
   `_comment`, `forwardOnAck`, `forwardChangesOnly`, `propagateAck`, `enabled` ist

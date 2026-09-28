@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "news": {
+      "0.4.0": {
+        "en": "BREAKING: channel datapoints are now named by a new per-coupling ID (channels.<id>) instead of the source state; old channels are deleted, so the 'enabled' switches start from their seed value again (the entry's own field, else the adapter default). New: one source may feed several targets (fan-out), each row with its own switch and filters; channels of deleted couplings are cleaned up at startup.",
+        "de": "ACHTUNG, brechende Änderung: die Kanal-Datenpunkte heißen jetzt nach einer neuen ID pro Kopplung (channels.<id>) statt nach dem Quell-Datenpunkt; alte Kanäle werden gelöscht, die 'enabled'-Schalter starten daher wieder mit ihrem Saatwert (Feld des Eintrags, sonst Adapter-Default). Neu: eine Quelle kann mehrere Ziele versorgen (Sternverteilung), jede Zeile mit eigenem Schalter und eigenen Filtern; Kanäle gelöschter Kopplungen werden beim Start aufgeräumt."
+      },
       "0.3.0": {
         "en": "Row-wise table editor for the mappings in the admin UI, with datapoint pickers and per-entry columns; the JSON is now a read-only view with a copy button. Malformed mapping entries can no longer disturb the adapter: they are dropped with a logged reason while all other entries keep relaying.",
         "de": "Zeilenweiser Tabellen-Editor für die Kopplungen im Admin-UI, mit Datenpunkt-Auswahl und Spalten für die Eintrags-Optionen; das JSON ist jetzt eine schreibgeschützte Ansicht mit Kopier-Knopf. Fehlerhafte Mapping-Einträge stören den Adapter nicht mehr: sie werden mit protokollierter Begründung verworfen, alle übrigen Kopplungen laufen weiter."
