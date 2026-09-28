@@ -292,6 +292,16 @@ Node.js ≥ 20 required.
 
 ## Changelog
 
+### 0.4.2 — periodic sync no longer undoes a write-back
+
+With a **bidirectional** coupling and **periodic sync** active, a change made at the
+target was reverted by the next tick: the cached source value was not updated when
+the adapter itself wrote the source, so the tick kept re-writing the outdated value
+while the source already held the new one.
+
+The cache now tracks the source regardless of who wrote it. Only configurations with
+both a bidirectional coupling and a sync interval were affected.
+
 ### 0.4.1 — `Enabled` is a startup strategy
 
 The **Enabled** column used to be a *seed* value: it was applied only when the

@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "news": {
+      "0.4.2": {
+        "en": "Fixed: with a bidirectional coupling and periodic sync active, a change made at the target was undone by the next tick. The cached source value was not updated when the adapter itself wrote the source, so the tick kept re-writing the outdated value. The cache is now maintained regardless of who wrote the state.",
+        "de": "Behoben: bei bidirektionaler Kopplung mit aktivem Zeittakt wurde eine am Ziel vorgenommene Änderung vom nächsten Takt wieder zurückgesetzt. Der gecachte Quellwert wurde nicht aktualisiert, wenn der Adapter die Quelle selbst geschrieben hatte, sodass der Takt weiterhin den veralteten Wert schrieb. Der Cache wird jetzt unabhängig davon gepflegt, wer den Datenpunkt geschrieben hat."
+      },
       "0.4.1": {
         "en": "Fixed: the 'Enabled' column was only a seed value, applied when the channel datapoint was created and ignored on every later start — a row set to 'no' did not switch the coupling off and the initial synchronization ran for it. It now takes effect at every start and has a fourth value: yes/no force the datapoint, (def) forces the adapter default, (keep) leaves the runtime datapoint alone (the previous behaviour, and what an empty cell means).",
         "de": "Behoben: die Spalte 'Enabled' war nur ein Saatwert — sie wirkte beim Anlegen des Kanal-Datenpunkts und wurde bei jedem späteren Start ignoriert; eine auf 'no' gesetzte Zeile schaltete die Kopplung nicht ab, und die initiale Synchronisation lief trotzdem für sie. Die Spalte wirkt jetzt bei jedem Start und hat einen vierten Wert: yes/no erzwingen den Datenpunkt, (def) erzwingt den Adapter-Default, (keep) lässt den Laufzeit-Datenpunkt unangetastet (bisheriges Verhalten und Bedeutung einer leeren Zelle)."

@@ -475,13 +475,21 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
   rückwärtskompatibel. `enabled` gehört damit **nicht** mehr zu den Filter-Flags
   (eigene Normalisierung `normalizeEnabled()`, vier statt drei Spaltenoptionen).
   `"old"`/`"hold"`/`"runtime"`/`"retain"` werden als Synonyme für `(keep)` akzeptiert.
-- [ ] **`lastState` vor dem Zyklusschutz pflegen** (nächster Commit). Heute returnt
+- [x] **`lastState` vor dem Zyklusschutz pflegen** (Version 0.4.2). Vorher returnte
   der `inFlight`-Guard **vor** der Cache-Pflege, deshalb behält `lastState` nach einem
   Rückschreiben den alten Wert. Folge: bei **bidirektional + Zeittakt** schreibt der
   Tick den veralteten Wert zurück und **setzt die Änderung des Ziels zurück** — ein
   Fehler, der unabhängig von der Sternverteilung besteht und nur unentdeckt blieb,
-  weil die Feldkonfiguration keinen Zeittakt nutzt. `lastState` soll „letzter bekannter
-  Quellwert" sein, unabhängig davon, wer geschrieben hat.
+  weil die Feldkonfiguration keinen Zeittakt nutzt. `lastState` ist jetzt „letzter
+  bekannter Quellwert" — unabhängig davon, wer geschrieben hat. Der Zyklusschutz läuft
+  weiterhin für **jede** eingehende ID (auch für solche ohne Kopplung), weil er den
+  `inFlight`-Eintrag räumen muss; ein liegengebliebener Eintrag würde das nächste echte
+  Ereignis verschlucken. Testfälle: Gruppe F der Fan-out-Testspezifikation.
+- [ ] **Verbleibende Grenze:** `inFlight` ist ein Set ohne Zähler. Schreiben zwei
+  Kopplungen dasselbe Ziel kurz hintereinander, räumt das erste Echo den Eintrag und
+  das zweite gilt als Fremdereignis. Für n:1 harmlos bis unschön, für einen künftigen
+  bidirektionalen Stern der Grund, warum Vorrang zwischen Satelliten nötig bleibt
+  (Design-Record §5).
 
 ### Offen / nachgelagert
 - [ ] **Phase 2: bidirektionaler Stern** — Rückschreiben eines Satelliten muss die

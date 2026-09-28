@@ -170,6 +170,31 @@ discards the resulting S event — that is its job. **T2 never learns of the cha
   Groundwork already in place: `sort` is switched off on all columns, so the stored
   array order really is the operator's order.
 
+#### Prerequisite discovered while discussing phase 2 (2026-09-28)
+
+Asked whether the periodic sync could close the gap — a satellite's write-back being
+picked up on the next tick — the answer turned out to be no, and worse: the tick made
+it actively harmful. `lastState` was updated *behind* the cycle guard, so an echo of
+our own write-back left the cache stale, and the tick then wrote the outdated value
+back over the very change that had just been made. The cache update now precedes the
+guard (`lastState` means "last known value of the source", whoever wrote it), which
+- fixes the same fault for a plain bidirectional coupling with periodic sync, a
+  defect independent of fan-out that only stayed hidden because the field
+  configuration runs without the tick, and
+- makes the tick a *usable* (if delayed) convergence path for a bidirectional star,
+  should it ever be allowed.
+
+What remains unfixable this way: `inFlight` is a Set without a counter, so two
+satellites writing the star point in quick succession make the propagation
+**non-deterministic** — the first echo clears the entry, the second is taken for a
+foreign event and distributes to everyone. Any real bidirectional star therefore
+needs precedence between satellites, not just a correct cache.
+
+A smaller, deterministic middle step was sketched (not decided): let **only the first
+bidirectional row of a star keep its reverse direction** — one designated writing
+satellite, the rest receive-only. No time window, no precedence logic, and it covers
+the common case of one control element plus several displays.
+
 ---
 
 ## 6. Deliberate limits and deferrals

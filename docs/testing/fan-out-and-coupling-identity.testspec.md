@@ -93,6 +93,26 @@ objects below `channels.`; O4 the log at warn/info; O5 read back
 | E4 | S→T1, S→T2, sync interval active | every tick writes **both** targets |
 | E5 | S→T1, S→T2, S has no value yet at start | both stay pending; the first event of S completes both |
 
+### Group F — `lastState` after a write-back (added 2026-09-28)
+
+The cache means "last known value of the source", regardless of who wrote it. These
+cases are **independent of fan-out** — they also apply to a plain bidirectional
+coupling — and they are the regression guard for the periodic sync undoing a change.
+
+| # | Configuration | Stimulus | Expected |
+|---|---|---|---|
+| F1 | `S ↔ T`, **sync interval active** | T is changed (so the adapter writes S) | the next tick writes T with the **new** value, not the old one — T keeps what was set there |
+| F2 | as F1 | T is changed, then wait for two ticks | T stays at the new value; no oscillation between old and new |
+| F3 | `S ↔ T`, no sync interval | T is changed | S is written once; no further writes (the echo is still discarded — the guard keeps working) |
+| F4 | `S → T1`, `S → T2` | S changes | unchanged behaviour: one write each, `lastState` reflects S |
+| F5 | `S ↔ T`, coupling **disabled** | T is changed | no write to S; but if S changes from outside, `lastValue` still tracks it |
+| F6 | a state that is target of a unidirectional coupling **and** source of another (`A → B`, `B → C`) | A changes | B written, then C written from the B echo's cached value — the chain resolves and `inFlight` is left clean (a second A change must relay again) |
+
+**F1 is the case the fault was found for.** Before the fix the tick wrote the stale
+cached value back to T, silently undoing the change made there while S kept the new
+one. F6 guards the flip side: the cycle guard must still clear its entry for every
+incoming id, otherwise the next genuine event is swallowed.
+
 ---
 
 ## 4. Coverage matrix
@@ -108,6 +128,8 @@ objects below `channels.`; O4 the log at warn/info; O5 read back
 | Bidirectional downgrade | D1–D4 |
 | Baseline per coupling | E1–E3, E5 |
 | Sync tick with fan-out | E4 |
+| Cache after a write-back, sync not undoing it | F1, F2, F5 |
+| Cycle guard still clearing its entry | F3, F6 |
 
 ---
 

@@ -710,24 +710,23 @@ class DpCoupler extends utils.Adapter {
         const ackCh = state.ack ? "T" : "F";
         dpcLog(`[dpc] ${id}  val=${state.val}  ack=${ackCh}  ${lcTs}  inFlight=${ifs()}`);
 
-        // Cycle guard: skip states we ourselves just wrote.
-        if (this.inFlight.has(id)) {
-            this.inFlight.delete(id);
-            dpcLog(`[dpc]   inFlight HIT → skip  inFlight=${ifs()}`);
-            return;
-        }
-
         // Determine which couplings this state feeds. With fan-out a source can serve
         // several couplings, and a state may even be the source of some couplings and
         // the (bidirectional) target of others — every coupling is served on its own.
         const forwards = this.sourceIndex.get(id) ?? [];
         const reverses = this.targetIndex.get(id) ?? [];
-        if (forwards.length === 0 && reverses.length === 0) return;
         dpcLog(`[dpc]   ${forwards.length} fwd, ${reverses.length} rev`);
 
         // Update last known source state and lastValue DPs (forward direction only).
-        // Done before the enabled check so the cache and DPs always reflect the current
-        // source value, even when a coupling is disabled.
+        //
+        // Deliberately BEFORE the cycle guard: `lastState` means "the last known value
+        // of the source", regardless of *who* wrote it. When the reverse direction of a
+        // bidirectional coupling writes the source, the resulting event is our own echo
+        // and the guard discards it — but the value is genuinely new. Skipping the cache
+        // here left it stale, and the periodic sync then wrote the outdated value back,
+        // undoing the change that had just been made at the target.
+        // Also before the enabled check, so cache and datapoints always reflect the
+        // current source value even when a coupling is disabled.
         if (forwards.length > 0) {
             this.lastState.set(id, state);
             for (const entry of forwards) {
@@ -740,6 +739,17 @@ class DpCoupler extends utils.Adapter {
                 }).catch(() => undefined);
             }
         }
+
+        // Cycle guard: skip relaying states we ourselves just wrote. Runs for *every*
+        // incoming id — also for one no coupling claims — because it must clear the
+        // inFlight entry; leaving it behind would swallow the next genuine event.
+        if (this.inFlight.has(id)) {
+            this.inFlight.delete(id);
+            dpcLog(`[dpc]   inFlight HIT → skip relay  inFlight=${ifs()}`);
+            return;
+        }
+
+        if (forwards.length === 0 && reverses.length === 0) return;
 
         for (const entry of forwards) await this.relayCoupling(entry, "forward", state);
         for (const entry of reverses) await this.relayCoupling(entry, "reverse", state);
