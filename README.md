@@ -75,6 +75,92 @@ On every successful start the current configuration is also written to
 `mappings.json` in the adapter's install directory as a convenience export
 (backup, deployment template).
 
+## What it is good for
+
+The adapter does one thing: it **connects datapoints**. It deliberately does *not*
+convert values beyond a type cast — that is what **ioBroker aliases** are for, and
+they do it better, with read and write formulas per datapoint.
+
+That division of labour is the point:
+
+> **dp-coupler creates the connections, aliases do the conversions.**
+
+Together they replace a surprising amount of script code. Each pattern below was a
+handful of rules or script lines before.
+
+### Distribute one value to many devices
+
+A room temperature, a setpoint, a mode — one source, several receivers. One table row
+per receiver, all with the same source.
+
+```
+sensor.room1.temperature  →  thermostat1.ACTUAL_EXTERNAL
+                          →  thermostat2.ACTUAL_EXTERNAL
+                          →  thermostat3.ACTUAL_EXTERNAL
+```
+
+Switch **on ACK** on if the source is a sensor or device that reports with `ack: true`
+— otherwise nothing is relayed at all.
+
+### Keep a setting in place against devices that forget it
+
+Some devices quietly drop a setting after a while — an external measured value they
+were told to use, a mode, a limit. Others expect to be refreshed and run into an
+undocumented timeout if they are not.
+
+Set a **sync interval**: the periodic sync re-writes every target with the last known
+source value, *whether it changed or not*. That unconditional write is the whole point
+here; the timestamp is the information.
+
+Note that the interval is **adapter-wide**. Different cadences — say a one-minute
+refresh for the temperature and a ten-minute one for the mode — are best solved with
+**separate adapter instances**, each with its own interval and its own couplings. That
+is a normal, supported arrangement, not a workaround.
+
+> **With radio devices, weigh the cost.** Every tick is a radio command per target:
+> battery, airtime, latency. Prefer the longest interval the devices tolerate.
+
+### Keep several devices in step with each other
+
+Any of them may be operated, and all should follow. Couple each device
+**bidirectionally** to a neutral central datapoint — not to each other:
+
+```
+0_userdata.0.heating.room1.setpoint  ↔  thermostat1.SETPOINT
+                                     ↔  thermostat2.SETPOINT
+                                     ↔  thermostat3.SETPOINT
+```
+
+See [Mapping tab](#mapping-tab) for the flags this needs and the caveat about devices
+that round differently. The central datapoint has a second benefit: it is the value
+VIS, scripts and logging should use, and it makes adding a device one more row.
+
+### Translate events and forward them
+
+Button and switch combinations rarely speak the language of the actuator. A Zigbee
+button reports `"single"` or `"double"`, the lamp wants `true`:
+
+```
+zigbee.0.button.action  →  [alias with a read formula]  →  light.0.state
+```
+
+Put an **alias with a conversion formula** in front, then couple the alias to the
+actuator. The same trick turns device-specific mode enumerations into each other.
+
+> **Switch `on change` off for buttons.** A button press is an *event*, not a state:
+> pressing `"double"` twice in a row is **not a value change**, and with the filter on
+> the repeat would be swallowed. For device values the same flag must stay **on** — it
+> is what suppresses the confirmation a device sends back after being written. Same
+> flag, opposite setting, which is why it is per entry.
+
+### Break a master-device dependency
+
+Where a protocol allows only one device to hold something — a heating schedule, for
+instance — a central datapoint plus **per-device alias formulas** lets the special role
+live in the configuration instead of in one privileged device. Each device gets the
+subset of values it may take; replacing the former master becomes a table edit rather
+than a redesign.
+
 ## Configuration
 
 ### Mapping tab
@@ -395,15 +481,24 @@ Initial proof-of-concept release.
 
 ## Roadmap
 
-- **Bidirectional fan-out** — let a value written back by one satellite reach the
-  other branches of a star, with the table row order as precedence
+- **Compare before writing, per entry** (`syncCompare`) — let the periodic sync skip a
+  target whose value already matches. The tick writes unconditionally today, which is
+  right for a heartbeat and wasteful for "keep these in step", especially with radio
+  devices. Per entry rather than adapter-wide, because both purposes occur in the same
+  configuration
+- **Immediate propagation in a bidirectional star** — let a value written back by one
+  branch reach the sibling branches at once instead of at the next tick
   ([design record](docs/design/fan-out-and-coupling-identity.md) §5)
 - **Cycle detection** — warn at startup about configurations that couple in a circle
   (`A→B, B→A` and longer chains); `inFlight` already prevents the runaway at runtime
 - **Fail counter** — set `info.connection` to `false` after a configurable
   number of consecutive write failures per mapping
-- **Value conversion** — optional `transform` expression per mapping entry
-  (JSON/JSONata), similar to ioBroker aliases
+
+**Deliberately not planned: value conversion.** Beyond the type cast, conversions
+belong in **ioBroker aliases** with their read/write formulas — they are per datapoint,
+already exist, and cover rounding, enumerations and scaling. Adding an expression
+language here would duplicate that with less reach. See
+[What it is good for](#what-it-is-good-for).
 
 ## License
 

@@ -200,8 +200,21 @@ Admin-AJV-Schema meldet `if/then`-Blocker **einzeln**; zwei latente Fehler in de
   `admin/i18n/`-Ordner, Labels sind literal).
 - [x] **Verifiziert:** nach Öffnen der Config im Admin-UI **keine weitere Fehlermeldung** — vollständig.
 
-### Feature B — JSONata-Transformation (später, optional)
-Erst umsetzen, wenn Cast im Feld läuft. Pipeline-Naht steht dann bereits.
+### Feature B — JSONata-Transformation: **bewusst zurückgestellt** (Stand 2026-09-28)
+
+**Nicht mehr geplant, solange kein neuer Anlass auftritt.** Der Feldbetrieb hat gezeigt,
+dass **ioBroker-Aliase mit Lese-/Schreib-Formeln** die Umrechnungen besser erledigen:
+sie sind pro Datenpunkt konfiguriert, existieren bereits, und der Bediener löst damit
+Rundung (Thermostat-Schrittweiten), Enum-Übersetzung (Taster `"single"`/`"double"` →
+`true`/`false`) und die geräteabhängige Beschränkung von Modus-Werten. Arbeitsteilung:
+**der Koppler verbindet, Aliase rechnen um** — in der README als Leitgedanke
+dokumentiert (Abschnitt „What it is good for").
+
+Die Pipeline-Naht `resolveValue()` bleibt bestehen und kostet nichts; der Kommentar
+dort spricht noch von „Feature B (later)" und sollte bei der nächsten Code-Änderung an
+dieser Stelle auf „falls je nötig" umformuliert werden (kein eigener Commit wert).
+
+Falls es doch je kommt, gilt die untenstehende Planung weiter:
 
 - [ ] Dependency `jsonata` aufnehmen (async eval; Fehlerbehandlung wie Cast: skip+warn).
 - [ ] Schema: `transform?: string` (forward) + `transformReverse?: string` (bidirektional).
@@ -539,7 +552,13 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
   Der skizzierte Zwischenschritt „nur die erste bidirektionale Zeile darf
   zurückschreiben" ist damit erledigt: beim Thermostat-Fall muss **jedes** Gerät
   schreiben dürfen.
-- [ ] **Rundungs-Schwingung dokumentieren statt lösen** (Entscheidung 2026-09-28):
+- [ ] **Takt pro Eintrag oder Taktgruppen** (aufgekommen 2026-09-28, nicht geplant):
+  `syncInterval` ist adapterweit, verschiedene Kadenzen brauchen daher **verschiedene
+  Instanzen** — so löst der Bediener es heute (eine Instanz hält den Modus der
+  Thermostate zyklisch, eine andere verteilt Messwerte). Das ist ein legitimes Muster
+  und in der README als solches dokumentiert; ein Takt pro Eintrag wäre die Alternative,
+  falls die Instanz-Zahl je unhandlich wird.
+- [x] **Rundungs-Schwingung dokumentieren statt lösen** (Entscheidung 2026-09-28):
   Geräte mit unterschiedlicher Schrittweite können sich endlos gegenseitig korrigieren,
   weil jede Korrektur eine *echte* Wertänderung ist, die kein Filter abfängt. Abhilfe
   außerhalb des Adapters: **ioBroker-Alias mit Lese-/Schreib-Formeln**. In der README
