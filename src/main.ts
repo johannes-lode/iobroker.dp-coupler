@@ -385,20 +385,6 @@ class DpCoupler extends utils.Adapter {
         }
 
         for (const entry of mappings) {
-            // Phase 1 of the star design: fan-out is unidirectional. The reverse write of
-            // a bidirectional branch lands on the star point, where the inFlight guard
-            // necessarily swallows the resulting event — the sibling branches would never
-            // see the value. Downgrade instead of discarding, so the distribution keeps
-            // working. See docs/design/fan-out-and-coupling-identity.md §5.
-            if (entry.bidirectional === true && (sourceUseCount.get(entry.source) ?? 0) > 1) {
-                this.log.warn(
-                    `dp-coupler: coupling "${entry.id}" (${entry.source} → ${entry.target}) is ` +
-                    `bidirectional, but "${entry.source}" feeds several targets – treated as ` +
-                    `unidirectional (the reverse direction would not reach the other branches).`
-                );
-                entry.bidirectional = false;
-            }
-
             this.couplings.push(entry);
 
             const forwards = this.sourceIndex.get(entry.source);
@@ -411,6 +397,8 @@ class DpCoupler extends utils.Adapter {
                 else this.targetIndex.set(entry.target, [entry]);
             }
         }
+
+        this.warnAboutBidirectionalStars(sourceUseCount);
 
         // Build per-channel objects (channels.<id>.enabled + .lastValue) for all active entries.
         //
@@ -574,9 +562,7 @@ class DpCoupler extends utils.Adapter {
         for (const entry of this.couplings) this.pendingBaseline.add(entry.id);
         await this.runBaselinePass();
 
-        const unitMultipliers: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
-        this.syncIntervalMs = (this.config.syncIntervalValue || 0)
-            * (unitMultipliers[this.config.syncUnit ?? "ms"] ?? 1);
+        this.syncIntervalMs = this.effectiveSyncIntervalMs();
         if (this.syncIntervalMs > 0) {
             this.syncTimer = setInterval(this.onSyncTick.bind(this), this.syncIntervalMs);
             this.log.info(
@@ -595,6 +581,52 @@ class DpCoupler extends utils.Adapter {
             (fanOutCount > 0 ? `, ${fanOutCount} source(s) fanned out` : ``) + `.`
         );
         await this.setStateAsync("info.connection", { val: true, ack: true });
+    }
+
+    /**
+     * Effective periodic sync interval in ms, computed from the live config. Read
+     * inline rather than from `syncIntervalMs` wherever the guard must also work
+     * without an adapter restart (that field is only set in onReady()).
+     */
+    private effectiveSyncIntervalMs(): number {
+        const unitMultipliers: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
+        return (this.config.syncIntervalValue || 0)
+            * (unitMultipliers[this.config.syncUnit ?? "ms"] ?? 1);
+    }
+
+    /**
+     * Bidirectional fan-out is permitted, but it has a weakness the operator should be
+     * reminded of at every start: a value written back by one branch lands on the star
+     * point, where the cycle guard necessarily discards the resulting event — so the
+     * sibling branches do not learn of it directly. Whether that matters depends on the
+     * periodic sync, hence two wordings. One warning per affected source, not per
+     * coupling. Analysis: docs/design/fan-out-and-coupling-identity.md §5.
+     */
+    private warnAboutBidirectionalStars(sourceUseCount: Map<string, number>): void {
+        const affected = new Map<string, MappingEntry[]>();
+        for (const entry of this.couplings) {
+            if (entry.bidirectional !== true) continue;
+            if ((sourceUseCount.get(entry.source) ?? 0) < 2) continue;
+            const list = affected.get(entry.source) ?? [];
+            list.push(entry);
+            affected.set(entry.source, list);
+        }
+        if (affected.size === 0) return;
+
+        const syncMs = this.effectiveSyncIntervalMs();
+        for (const [sourceId, entries] of affected) {
+            const ids   = entries.map(e => e.id).join(", ");
+            const total = sourceUseCount.get(sourceId) ?? 0;
+            this.log.warn(
+                `dp-coupler: "${sourceId}" feeds ${total} targets, ${entries.length} of them ` +
+                `bidirectionally (${ids}). A value written back by one branch does not reach ` +
+                `the other branches directly – the cycle guard discards the source event by ` +
+                (syncMs > 0
+                    ? `necessity; periodic sync evens it out within ${syncMs} ms.`
+                    : `necessity, and without periodic sync the other branches keep their ` +
+                      `previous value until the source changes from outside.`)
+            );
+        }
     }
 
     /**
@@ -786,12 +818,8 @@ class DpCoupler extends utils.Adapter {
         }
 
         // Periodic-only mode: skip event relay when sync is active and relayOnChange is off.
-        // Computed inline from this.config so the guard works without an adapter restart when
-        // the config changes (this.syncIntervalMs is only updated in onReady()).
-        const unitMultipliers: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
-        const effectiveMs = (this.config.syncIntervalValue || 0)
-            * (unitMultipliers[this.config.syncUnit ?? "ms"] ?? 1);
-        if (effectiveMs > 0 && !this.config.relayOnChange) return;
+        // Read from the live config so the guard works without an adapter restart.
+        if (this.effectiveSyncIntervalMs() > 0 && !this.config.relayOnChange) return;
 
         // forwardOnAck filter: default false — skip ack=true device confirmations.
         const shouldForwardOnAck = entry.forwardOnAck ?? this.config.forwardOnAckDefault ?? false;

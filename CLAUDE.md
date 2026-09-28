@@ -145,7 +145,9 @@ Per-entry fields override adapter-level defaults (`forwardOnAckDefault`, `forwar
 
 Validation rules (see `isMappingEntry` / `normalizeEntry` above): `source` and `target` are mandatory and must be plausible state IDs; they are trimmed. `source === target` is rejected, as are duplicate `id`s and duplicate `(source, target)` pairs. Optional flags are normalized tolerantly and never cause the entry to be discarded.
 
-**Fan-out (1:n).** The same `source` may appear in several entries — one row per target, each an independent coupling. Only the *pair* must be unique. A `bidirectional` entry whose source feeds several targets is **downgraded to unidirectional** with a warning: its reverse write lands on the star point, where `inFlight` necessarily swallows the resulting event, so the sibling branches would never see the value. Full analysis including the deferred bidirectional-star design: `docs/design/fan-out-and-coupling-identity.md` §5.
+**Fan-out (1:n).** The same `source` may appear in several entries — one row per target, each an independent coupling. Only the *pair* must be unique.
+
+**Bidirectional fan-out is permitted** (since 0.4.3; it was downgraded before). `warnAboutBidirectionalStars()` logs one warning per affected source at every start, worded according to whether periodic sync is active. The weakness it names: a value written back by one branch lands on the star point, where `inFlight` necessarily discards the resulting event, so the sibling branches do not learn of it directly — the periodic sync evens it out, immediate propagation needs `relayFrom()` (phase 2). With two branches writing in quick succession the behaviour is **non-deterministic**, because `inFlight` is a Set without a counter: the first echo clears the entry and the second is taken for a foreign event. Full analysis: `docs/design/fan-out-and-coupling-identity.md` §5.
 
 ### Cycle guard (`inFlight`)
 

@@ -121,7 +121,7 @@
                     "type": "staticText",
                     "newLine": true,
                     "style": { "fontSize": "0.8rem", "opacity": 0.75 },
-                    "text": "ID names this coupling's datapoints under channels.<id> — generated automatically, editable, must stay unique · One source may feed several targets (fan-out); such branches are relayed one-directionally · Enabled = startup strategy for this coupling's switch: yes/no force it at every start, (def) forces the adapter default, (keep) leaves the runtime datapoint alone · Per-entry filters: (def) = use the adapter default from the Adapter-Settings tab · on ACK = relay also when the source carries ack=true · on change = skip re-writes of an unchanged value · pass ACK = write the target with the source's ack flag instead of ack=false"
+                    "text": "ID names this coupling's datapoints under channels.<id> — generated automatically, editable, must stay unique · One source may feed several targets (fan-out); bidirectional branches are allowed, but a value written back by one branch reaches the others only through the periodic sync — the log says so at every start · Enabled = startup strategy for this coupling's switch: yes/no force it at every start, (def) forces the adapter default, (keep) leaves the runtime datapoint alone · Per-entry filters: (def) = use the adapter default from the Adapter-Settings tab · on ACK = relay also when the source carries ack=true · on change = skip re-writes of an unchanged value · pass ACK = write the target with the source's ack flag instead of ack=false"
                 },
                 "mappingsRaw": {
                     "type": "text",

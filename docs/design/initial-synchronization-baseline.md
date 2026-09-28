@@ -136,6 +136,24 @@ setpoint / switch command) even when nothing changed.
   compare keeps it safe, so an opt-out is not warranted. An opt-out remains
   purely additive should a real need ever surface.
 
+### Addendum 2026-09-28 — "the sync tick stays unconditional" becomes a choice
+
+This record settled that the periodic tick writes **unconditionally**, without the
+compare the baseline uses. That decision is not revoked, but it turned out to serve
+only **one of the tick's two purposes**:
+
+- **Heartbeat / watchdog:** the write must happen even for an unchanged value, because
+  the *timestamp* is the information. Unconditional is right.
+- **"Keep these targets on the same value":** the opposite. For radio devices — the
+  driving case is several thermostats of one room — every tick becomes a radio command,
+  costing battery and latency for nothing.
+
+Both purposes can occur in the same configuration, so an adapter-wide switch would
+sacrifice one of them. Planned therefore as a **per-entry** flag `syncCompare`
+(three-valued like the filters, with a `syncCompareDefault`), letting the tick use the
+existing `baselineWrite()` path. See `WORKPLAN.md`; the mechanism itself already
+exists, only the permission to use it is missing.
+
 ### Dimension 4 — Re-enabling a channel (added 2026-07-17)
 
 A channel can be disabled at adapter start (per-channel `enabled = false`). The

@@ -1,8 +1,12 @@
 {
   "common": {
     "name": "dp-coupler",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "news": {
+      "0.4.3": {
+        "en": "Bidirectional branches of a fan-out are no longer downgraded to unidirectional. They are allowed, and the adapter warns once per affected source at every start: a value written back by one branch does not reach the sibling branches directly — with periodic sync active they are evened out at the next tick. Enables keeping several devices (e.g. the thermostats of a room) in step through a neutral datapoint.",
+        "de": "Bidirektionale Zweige einer Sternverteilung werden nicht mehr auf unidirektional zurückgestuft. Sie sind zulässig, und der Adapter warnt bei jedem Start einmal pro betroffener Quelle: ein von einem Zweig zurückgeschriebener Wert erreicht die übrigen Zweige nicht direkt — bei aktivem Zeittakt werden sie beim nächsten Takt ausgeglichen. Damit lassen sich mehrere Geräte (z. B. die Thermostate eines Raums) über einen neutralen Datenpunkt gleich halten."
+      },
       "0.4.2": {
         "en": "Fixed: with a bidirectional coupling and periodic sync active, a change made at the target was undone by the next tick. The cached source value was not updated when the adapter itself wrote the source, so the tick kept re-writing the outdated value. The cache is now maintained regardless of who wrote the state.",
         "de": "Behoben: bei bidirektionaler Kopplung mit aktivem Zeittakt wurde eine am Ziel vorgenommene Änderung vom nächsten Takt wieder zurückgesetzt. Der gecachte Quellwert wurde nicht aktualisiert, wenn der Adapter die Quelle selbst geschrieben hatte, sodass der Takt weiterhin den veralteten Wert schrieb. Der Cache wird jetzt unabhängig davon gepflegt, wer den Datenpunkt geschrieben hat."

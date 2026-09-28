@@ -74,14 +74,23 @@ objects below `channels.`; O4 the log at warn/info; O5 read back
 | C4 | **upgrade case:** pre-0.4.0 channels present (`channels.<source_with_underscores>.*`), new configuration with ids | old channels removed at startup, new ones created; log reports the removal count |
 | C5 | change a coupling's `id`, restart | new channel created, old one removed — `enabled` starts from the seed again (documented breaking behaviour) |
 
-### Group D — Bidirectional in a star
+### Group D — Bidirectional in a star (rewritten for 0.4.3)
 
-| # | Configuration | Expected |
-|---|---|---|
-| D1 | S↔T1 only (source used once) | bidirectional **kept**: a change of T1 is relayed back to S |
-| D2 | S↔T1 **and** S→T2 | D1's entry is **downgraded**: warning names the coupling, a change of T1 is **not** relayed to S, S still feeds T1 and T2 |
-| D3 | S↔T1 and S↔T2 | both downgraded, two warnings, forward distribution intact |
-| D4 | after D2, restart | same behaviour — the downgrade is a runtime decision, the stored `bidirectional` value is not rewritten |
+Bidirectional branches are **permitted**; the adapter only warns. D2–D6 replace the
+downgrade cases of 0.4.0–0.4.2.
+
+| # | Configuration | Stimulus | Expected |
+|---|---|---|---|
+| D1 | S↔T1 only (source used once) | T1 changes | relayed back to S; **no** warning |
+| D2 | S↔T1 **and** S→T2 | adapter start | exactly **one** warning, naming the source, the number of targets and the bidirectional coupling's id |
+| D3 | S↔T1 and S↔T2 | adapter start | **one** warning (per source, not per coupling), naming both ids |
+| D4 | S↔T1, S↔T2, **no** periodic sync | T1 changes | S written; **T2 not written** (the documented weakness); warning text says the branches keep their previous value |
+| D5 | as D4 but **with** periodic sync | T1 changes, then one tick | S written, then T2 reaches the new value at the tick; warning text names the interval in ms |
+| D6 | S↔T1, S↔T2 | T1 and T2 change in quick succession | **non-deterministic by design** — either all three converge on the later value, or source and the later branch hold it while the earlier one keeps its own. The test may only assert that *no* infinite relay occurs and that the source holds one of the two written values; with periodic sync, that everything converges within one tick |
+
+D6 must not be written as a deterministic expectation. `inFlight` is a Set without a
+counter, so the outcome depends on whether the first echo arrives before or after the
+second write — see the design record's case analysis.
 
 ### Group E — Baseline and sync tick with fan-out
 
@@ -125,7 +134,8 @@ incoming id, otherwise the next genuine event is swallowed.
 | Duplicate id / duplicate pair | B6, B7 |
 | Channel naming and metadata | C1, C2 |
 | Orphan cleanup, incl. the upgrade | C3–C5 |
-| Bidirectional downgrade | D1–D4 |
+| Bidirectional star: warning, weakness, convergence | D1–D5 |
+| Non-determinism with two writing branches | D6 |
 | Baseline per coupling | E1–E3, E5 |
 | Sync tick with fan-out | E4 |
 | Cache after a write-back, sync not undoing it | F1, F2, F5 |

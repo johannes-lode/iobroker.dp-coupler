@@ -151,10 +151,14 @@ turns what looked like the largest piece of this package into the smallest:
 `S ↔ T1` and `S ↔ T2`: T1 writes back to S, and the `inFlight` guard necessarily
 discards the resulting S event — that is its job. **T2 never learns of the change.**
 
-- **Phase 1 [CHOSEN for this package]: fan-out is unidirectional.** As soon as a
-  source appears more than once, `bidirectional` is **downgraded** for those entries
-  with a clear log warning, rather than discarding the entry. The distribution keeps
-  working; only the problematic reverse direction falls away.
+- ~~**Phase 1: fan-out is unidirectional.**~~ **SUPERSEDED 2026-09-28 (0.4.3).** The
+  downgrade was paternalistic: it decided for the operator that an incomplete
+  propagation is worse than none. It is replaced by a **warning at every start**
+  (`warnAboutBidirectionalStars()`), worded according to whether periodic sync is
+  active, since that changes the outcome fundamentally. The driving case is the one
+  the downgrade would have blocked: several radiator thermostats of a room kept in
+  step through a neutral datapoint, each device able to report a change made at the
+  device itself.
 - **Phase 2 [DEFERRED — the "royal" solution]:** the reverse direction must trigger
   the distribution **in code** rather than through the event, e.g.
   `relayFrom(source, value, exceptTarget)`, so every satellite of the star sees a
@@ -193,7 +197,36 @@ needs precedence between satellites, not just a correct cache.
 A smaller, deterministic middle step was sketched (not decided): let **only the first
 bidirectional row of a star keep its reverse direction** — one designated writing
 satellite, the rest receive-only. No time window, no precedence logic, and it covers
-the common case of one control element plus several displays.
+the common case of one control element plus several displays. *Not pursued* once the
+thermostat case showed that every device must be able to write.
+
+### Who wins — case analysis (2026-09-28)
+
+Worked through before allowing bidirectional fan-out, with `S ↔ T1`, `S ↔ T2`:
+
+| Situation | Without periodic sync | With periodic sync |
+|---|---|---|
+| S changes externally | consistent immediately | consistent |
+| one branch writes back | the other branches keep the old value | evened out within one tick |
+| two branches write, writes overlapping | converges immediately on the later value — the first echo clears the `inFlight` entry, so the **second echo is taken for a foreign event** and does distribute | same |
+| two branches write, echoes sequential | divergent: source and the later branch hold the new value, the earlier one its own | evened out within one tick |
+| a branch is operated while we are writing that same branch | the genuine event is mistaken for our echo and **dropped** (pre-existing `inFlight` property, not specific to stars; the star widens the window) | same, and more often, because every tick fills `inFlight` |
+
+Two consequences worth keeping:
+
+- **Precedence comes from event order, never from configuration.** The row order only
+  determines the order of writes within one event. Making it a precedence rule (phase
+  2's idea) therefore needs extra machinery.
+- **`forwardOnAck` is the practical relief valve.** Off by default and applying to the
+  reverse direction as well, so a device or adapter reporting with `ack: true` causes
+  no write-back at all. The conflict cases only arise where a *command* (`ack: false`)
+  is written to a branch — or where `forwardOnAck` is switched on deliberately, as the
+  thermostat case requires. There, `forwardChangesOnly` becomes essential: it is what
+  suppresses the confirmation a device sends after being written (unchanged value,
+  `lc < ts`). A device that reports a *rounded* value instead sends a genuine change
+  that no filter stops — two devices with different step sizes can oscillate. Remedy
+  belongs outside the adapter (an ioBroker alias with read/write formulas) or in a
+  future transform.
 
 ---
 

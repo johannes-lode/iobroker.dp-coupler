@@ -97,10 +97,36 @@ must not start or end with a dot.
 
 **Fan-out (one source, several targets)** is supported: enter one row per target with
 the same source. Each row is an independent coupling with its own switch and its own
-filter flags. Such branches are relayed **one-directionally** — if you mark a row
-bidirectional while its source feeds several targets, the adapter downgrades it to
-unidirectional and says so in the log, because a value written back to the star point
-could not reach the sibling branches.
+filter flags.
+
+**Bidirectional branches of a fan-out are allowed**, with one limitation the adapter
+warns about at every start: a value written back by one branch reaches the star point,
+but **not the sibling branches directly** — the cycle guard has to discard the
+resulting source event, otherwise every relay would echo endlessly. With **periodic
+sync** active the branches are evened out at the next tick; without it they keep their
+previous value until the source changes from elsewhere.
+
+A typical use is keeping several devices in step through a neutral datapoint:
+
+```
+0_userdata.0.heating.room1.setpoint  ↔  thermostat1.SETPOINT
+                                     ↔  thermostat2.SETPOINT
+                                     ↔  thermostat3.SETPOINT
+```
+
+All devices are treated equally, and another radiator is one more row. For that to
+work with devices that report their own value, switch **on ACK** on — the devices
+announce a change made at the device with `ack: true`. Leave **on change** on: it is
+what suppresses the confirmation a device sends back after being written.
+
+> **Caution with devices that round.** If two devices use different step sizes (one
+> stores 21.5, the other rounds it to 21.0), each correction is a *genuine* value
+> change that no filter suppresses — the two can then oscillate indefinitely. Use
+> devices with the same step size, or put an **ioBroker alias with read/write
+> formulas** between adapter and device so the rounding happens in one defined place.
+
+Avoid coupling the devices directly to each other in a full mesh (`T1↔T2`, `T1↔T3`,
+`T2↔T3`): that is a circular configuration, and the cycle guard is not designed for it.
 
 Below the table, **Mappings (JSON view)** shows the stored configuration in its
 canonical form. It is **read-only** — the table is the editor — and has a copy
@@ -291,6 +317,16 @@ Node.js ≥ 20 required.
 `npm run build` and include the updated `build/` in the commit.
 
 ## Changelog
+
+### 0.4.3 — bidirectional fan-out allowed
+
+Bidirectional branches of a fan-out were downgraded to unidirectional with a warning.
+They are now **allowed**; the adapter only warns, once per affected source at every
+start, and the wording states whether the periodic sync will even the branches out.
+
+This enables keeping several devices in step through a neutral datapoint — the
+thermostats of one room, for instance. See [Mapping tab](#mapping-tab) for the
+pattern, the required flags, and the caveat about devices that round differently.
 
 ### 0.4.2 — periodic sync no longer undoes a write-back
 

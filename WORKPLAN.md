@@ -491,10 +491,59 @@ Testspezifikation: [`docs/testing/fan-out-and-coupling-identity.testspec.md`](do
   bidirektionalen Stern der Grund, warum Vorrang zwischen Satelliten nötig bleibt
   (Design-Record §5).
 
+- [x] **Bidirektionale Sterne nicht mehr bevormunden** (Version 0.4.3, Entscheidung
+  2026-09-28). Die Rückstufung entschied für den Bediener, dass eine unvollständige
+  Propagation schlimmer sei als keine — und blockierte genau den treibenden Fall
+  (mehrere Heizkörper-Thermostate eines Raums über einen neutralen Hilfsdatenpunkt,
+  jedes Gerät darf melden). Ersetzt durch `warnAboutBidirectionalStars()`: eine
+  Warnung **pro betroffener Quelle** bei jedem Start, im Wortlaut abhängig davon, ob
+  ein Zeittakt aktiv ist (er ändert das Ergebnis grundlegend). Vollständige
+  Fallunterscheidung „wer gewinnt" im Design-Record §5.
+  Nebenbei: der dreifach duplizierte Intervall-Ausdruck ist zu
+  `effectiveSyncIntervalMs()` zusammengefasst (für die Warnung gebraucht).
+
 ### Offen / nachgelagert
+
+- [ ] **`syncCompare` pro Eintrag — compare-then-write für den Zeittakt.**
+  **Vor Phase 2 gezogen** (Entscheidung 2026-09-28). Begründung: der Takt hat *zwei*
+  Zwecke. Für einen **Heartbeat** ist das unbedingte Schreiben richtig — dort ist der
+  Zeitstempel die Information. Für **„halte diese Ziele auf demselben Wert"** ist es
+  genau falsch, und bei Funkgeräten (Thermostate!) schädlich: jeder Takt ein
+  Funkkommando, Batterie und Latenz. Beide Zwecke können in derselben Konfiguration
+  nebeneinander stehen, deshalb **pro Eintrag** und nicht adapterweit — ein globaler
+  Schalter würde einen der beiden opfern.
+  - Mechanik existiert: `baselineWrite()` macht compare-then-write vollständig; der
+    Takt muss diesen Pfad nur benutzen dürfen.
+  - Dreiwertig wie die Filter (`(def)`/yes/no) plus `syncCompareDefault` in den
+    Adapter-Einstellungen. Es ist ein **Filter des Takts**, gehört also in diese
+    Gruppe — nicht zu `enabled`, das seit 0.4.1 eine Startwert-Strategie ist.
+  - Name bewusst `syncCompare`, nicht „…Change": `forwardChangesOnly` (Ereignisfilter)
+    und `relayOnChange` (adapterweit) sind schon belegt, ein dritter „change"-Begriff
+    wäre eine Verwechslungsfalle. Spaltentitel etwa „sync cmp".
+  - Mitbedenken: die Last verschiebt sich (ein Lesezugriff pro Kopplung pro Takt) —
+    für Funkgeräte klarer Gewinn, für lokale Datenpunkte neutral bis leicht negativ,
+    noch ein Grund für die Entscheidung pro Eintrag. Und `baselineWrite()` vergleicht
+    mit `===`: bei Fließkommawerten kann eine Darstellungsdifferenz dazu führen, dass
+    doch jedes Mal geschrieben wird.
+  - **Nachtrag im Baseline-Design-Record** nötig: dort steht „Sync-Tick: bleibt
+    unbedingt (kein Vergleich)" als Festlegung. Sie wird nicht aufgehoben, sondern zur
+    Wahl gemacht.
+  - Nebeneffekt: mit `syncCompare = yes` wird der Takt zu einem brauchbaren
+    Konvergenz-Mechanismus für den bidirektionalen Stern — ohne Funklast, nur
+    latenzbehaftet.
 - [ ] **Phase 2: bidirektionaler Stern** — Rückschreiben eines Satelliten muss die
-  übrigen Sternteilnehmer erreichen (`relayFrom(..., exceptTarget)`), mit der
-  Tabellen-Reihenfolge als Vorrang und einem Zeitfenster. Eigener Design-Record.
+  übrigen Sternteilnehmer erreichen (`relayFrom(..., exceptTarget)`). **Nach**
+  `syncCompare`. Der Vorrang-Gedanke (Tabellen-Reihenfolge + Zeitfenster) ist für den
+  Thermostat-Fall **nicht** nötig: „wer zuletzt kommt, gewinnt" ist dort genau das
+  gewollte Verhalten — die letzte Bedienhandlung zählt. Eigener Design-Record.
+  Der skizzierte Zwischenschritt „nur die erste bidirektionale Zeile darf
+  zurückschreiben" ist damit erledigt: beim Thermostat-Fall muss **jedes** Gerät
+  schreiben dürfen.
+- [ ] **Rundungs-Schwingung dokumentieren statt lösen** (Entscheidung 2026-09-28):
+  Geräte mit unterschiedlicher Schrittweite können sich endlos gegenseitig korrigieren,
+  weil jede Korrektur eine *echte* Wertänderung ist, die kein Filter abfängt. Abhilfe
+  außerhalb des Adapters: **ioBroker-Alias mit Lese-/Schreib-Formeln**. In der README
+  vermerkt (Abschnitt „Mapping tab"); kein Adapter-Feature dafür.
 - [ ] **Zyklus-Erkennung** (Backlog, Entscheidung 2026-09-28): Startup-Prüfung auf
   `A→B, B→A` und längere Ketten. `inFlight` schützt zur Laufzeit; die Erkennung ist
   Komfort, vorerst Sache des Bedieners.
